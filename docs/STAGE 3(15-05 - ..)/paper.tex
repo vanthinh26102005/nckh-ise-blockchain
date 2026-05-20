@@ -1,0 +1,277 @@
+\documentclass[journal]{IEEEtran}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{cite}
+\usepackage{url}
+\usepackage{hyperref}
+\usepackage{tabularx}
+
+\begin{document}
+
+\title{EPCIS-Aware Recursive Zero-Knowledge Rollup for Privacy-Preserving Multinational Supply-Chain Traceability under the EU Deforestation Regulation}
+
+% \author{Tuan-Dung~Tran,
+%         Van-Thinh~Ngo,
+%         Huu-Tri~Phan,
+%         and~Duy-Nhan~Tran
+% \thanks{T.-D. Tran (corresponding author, e-mail: dungtrt@uit.edu.vn), V.-T. Ngo, H.-T. Phan, and D.-N. Tran are with the University of Information Technology, Vietnam National University Ho Chi Minh City, Ho Chi Minh City, Vietnam.}}
+
+% \markboth{IEEE Transactions on Industrial Informatics,~Vol.~XX, No.~X, 2026}{Tran \MakeLowercase{\textit{et al.}}: EPCIS-Aware Recursive ZK Rollup for EUDR Traceability}
+
+\maketitle
+
+\begin{abstract}
+Global supply chains operating under the European Union Deforestation Regulation (EU 2023/1115, EUDR) must prove, at the granularity of individual lots, that commodities such as coffee, cocoa, and timber were not produced on deforested land after 31 December 2020. Existing industrial traceability stacks couple Electronic Product Code Information Services (EPCIS) event streams with permissioned blockchains or with hash-on-chain anchors, but neither approach offers verifiable compliance to third-party auditors without revealing the underlying farm coordinates, certificate identifiers, and pricing information. This paper presents an EPCIS-aware recursive zero-knowledge rollup architecture that publishes one constant-size proof per shipment on a public settlement layer while keeping the supporting EPCIS aggregations on a permissioned ledger. The contribution is fourfold. First, a formal signal-typing discipline maps EPCIS \texttt{ObjectEvent}, \texttt{AggregationEvent}, and \texttt{TransformationEvent} primitives onto arithmetic constraint systems with a soundness-preserving witness reduction. Second, a recursive Plonky2 wrapper composes five sub-circuits (geofence inclusion, certificate Merkle membership, threshold arithmetic on continuous KPIs, batched signature verification, and nullifier uniqueness) into a single attestation of constant verifier cost. Third, a selective-disclosure compliance view lets an EUDR auditor or a downstream EU importer reveal a chosen subset of attributes (lot identifier, harvest plot polygon hash, certificate root) without exposing competitive information. Fourth, a Vietnam-to-European-Union coffee case study compares the proposed design against private-only Hyperledger Fabric, hash-on-chain anchoring, and the VeCroToken benchmark on proving cost, settlement latency, throughput, and storage. The simulation shows that the proposed stack reaches an end-to-end audit latency of 4.1~s per shipment at 350~lots/minute with proof size 196~B, while reducing on-chain bytes per shipment by a factor of 18 against hash-on-chain and a factor of 73 against on-chain EPCIS replay. The framework provides a deployable template for EUDR, Carbon Border Adjustment Mechanism (CBAM), and Digital Product Passport (DPP) reporting in coffee, cocoa, timber, and battery supply chains.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Zero-knowledge proof, recursive SNARK, supply-chain traceability, EPCIS, EU Deforestation Regulation, privacy-preserving compliance, Industrial Internet of Things, Plonky2.
+\end{IEEEkeywords}
+
+\section{Introduction}
+\IEEEPARstart{T}{he} European Union Deforestation Regulation requires operators placing seven commodities on the EU market to file a due-diligence statement showing, per lot, the geolocation of the production plot and the absence of deforestation after 31 December 2020. The regulation applies to coffee, cocoa, palm oil, rubber, soy, cattle, and wood, with full enforcement scheduled from 30 December 2025 for large operators. Compliance forces a sharp turn: information that was traditionally treated as a competitive asset (farm coordinates, intermediary commissions, certification audits) must now be made auditable to a regulator, while remaining hidden from competitors operating along the same trade corridor.
+
+The dominant industrial response is a stack that combines GS1 EPCIS 2.0 event capture at packing and shipping points with a permissioned distributed ledger such as Hyperledger Fabric for cross-organisational data sharing \cite{androulaki2018fabric, saberi2019blockchain}. This pattern excels at internal auditability among trusting partners but fails the EUDR threat model on two fronts. First, the regulator and the EU importer do not sit inside the consortium; granting them read access to raw EPCIS streams discloses commercially sensitive information at the lot granularity. Second, a permissioned ledger requires participants to trust the consortium operator; a fraudulent operator can rewrite history before an audit and the regulator has no cryptographic recourse \cite{kosba2016hawk}. Public-chain alternatives that anchor hashes on Ethereum solve the trust problem but require off-chain disclosure of the raw events to make those hashes meaningful, which reintroduces the privacy issue.
+
+A third family of designs, exemplified by VeCroToken and similar token-based traceability systems \cite{saberi2019blockchain}, encodes lot ownership as a non-fungible token and relies on attribute-based encryption for selective disclosure. These designs scale poorly under EUDR because each compliance check forces a per-attribute decryption that grows linearly with the number of audited fields, and they do not produce a single succinct artefact that an EU customs officer can verify in milliseconds at the border. The research gap is therefore a verifiable compliance object that is constant-size, privacy-preserving by default, selectively disclosable on demand, and economically settleable on a public layer.
+
+This paper closes that gap with an EPCIS-aware recursive zero-knowledge rollup. The design layers a permissioned Fabric channel for raw event capture (Layer~0), a recursive Plonky2 rollup that batches EPCIS-derived statements into a single proof (Layer~2), and a public Ethereum settlement contract that records the rollup root (Layer~1). The contributions are: (1) a signal-typing discipline that formally maps EPCIS \texttt{ObjectEvent}, \texttt{AggregationEvent}, and \texttt{TransformationEvent} primitives onto arithmetic constraints, with a proof that the reduction preserves provenance soundness; (2) a recursive composition rule that combines five domain sub-circuits (geofence, certificate, threshold, signature, nullifier) into one constant-size attestation, instantiated with the Plonky2 plonkish proof system; (3) a selective-disclosure compliance view that lets each downstream stakeholder reveal a different subset of attributes without re-proving; and (4) a simulation-based evaluation on a Vietnam-to-EU coffee corridor that benchmarks the proposed stack against three industrially deployed baselines under identical workload and threat assumptions.
+
+The remainder of the paper is organised as follows. Section~\ref{sec:related} reviews related work on EPCIS-based traceability, blockchain for sustainability compliance, and zero-knowledge rollups, and positions the contributions inside a comparative summary table. Section~\ref{sec:model} formalises the system model, the EUDR-driven threat model, and the notation. Section~\ref{sec:method} presents the EPCIS signal typing, the five sub-circuits, the recursive composition algorithm, and the selective-disclosure mechanism. Section~\ref{sec:experiments} reports the experimental protocol and answers four research questions on cryptographic cost, latency, throughput, and storage. Section~\ref{sec:conclusion} concludes and outlines deployment paths for CBAM and DPP scenarios.
+
+\section{Related Work}
+\label{sec:related}
+
+\subsection{EPCIS-Based Traceability and Industrial Information Sharing}
+Industrial traceability standards have converged on the GS1 EPCIS 2.0 specification, which defines the four event primitives (\texttt{Object}, \texttt{Aggregation}, \texttt{Transformation}, \texttt{Transaction}) used to describe item-level movements in a supply chain. The integration of EPCIS streams with cross-organisational information systems has been studied in the context of cybersecurity in Industry 4.0 by Corallo \emph{et al.}, who classify the threats facing manufacturing information sharing and identify regulatory compliance as a primary unmet need \cite{corallo2020cybersecurity}. A follow-up systematic review confirms that cybersecurity awareness remains the bottleneck in cross-enterprise data exchange \cite{corallo2022awareness}, and a recent IEEE Transactions on Engineering Management contribution proposes a dark-data classification framework that aligns hidden information flows with risk management practice \cite{corallo2023darkdata, lezzi2024tem}. These works motivate selective disclosure but stop short of a cryptographic mechanism.
+
+\subsection{Blockchain Traceability for Sustainability and Circular Economy}
+The relationship between blockchain technology and sustainable supply chain management was established by Saberi \emph{et al.}, who identify four classes of barriers (technological, organisational, environmental, system-related) and call for designs that decouple privacy from auditability \cite{saberi2019blockchain}. Sustainability-focused traceability has been extended to circular economy contexts by Corallo \emph{et al.} in their model-based engineering pipeline for product life-cycle management \cite{corallo2022mbe}, and by Bressanelli \emph{et al.} in their analysis of digitally enabled circular supply chains \cite{bressanelli2020circular}. The mainstream industrial implementations remain anchored either on permissioned ledgers or on hash-on-chain patterns, neither of which yields a constant-size, privacy-preserving compliance object suitable for EUDR enforcement.
+
+\subsection{Zero-Knowledge Proofs and Rollups for Verifiable Computation}
+The cryptographic substrate for the proposed work is the family of succinct non-interactive arguments of knowledge (SNARKs) initiated by Groth's pairing-based construction \cite{groth2016snark} and extended by privacy-preserving smart-contract architectures such as Hawk \cite{kosba2016hawk}. Recursive SNARKs allow the verifier of one proof to itself be expressed inside another proof, which is the key enabler for batching heterogeneous statements into a single artefact. Industrial-grade recursion has matured into zero-knowledge rollups for Ethereum scaling, where a sequencer aggregates user transactions, executes them off-chain, and posts a single validity proof to a settlement contract. The present paper transposes this pattern from financial throughput scaling to supply-chain compliance, with sub-circuits tailored to EPCIS semantics rather than to Ethereum Virtual Machine traces.
+
+\subsection{Comparative Positioning}
+Table~\ref{tab:related-comparison} positions the proposed design against three representative baselines. The proposed stack is the only one that combines a public settlement anchor with privacy by default and constant verifier cost.
+
+\begin{table*}[t]
+\centering
+\caption{Comparative positioning against representative supply-chain traceability designs.}
+\label{tab:related-comparison}
+\footnotesize
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\textwidth}{@{} >{\raggedright\arraybackslash}p{3.8cm} *{4}{>{\centering\arraybackslash}X} @{}}
+\toprule
+\textbf{Property} & \textbf{Fabric (private only)} & \textbf{Hash-on-chain} & \textbf{VeCroToken family} & \textbf{Proposed} \\
+\midrule
+Public-chain settlement & No & Yes & Yes & Yes \\
+Privacy of raw EPCIS data & Yes (consortium only) & No (off-chain disclosure) & Partial (per-attribute) & Yes (default) \\
+Selective disclosure to auditor & Manual & Manual & Per-attribute decryption & Cryptographic view \\
+Verifier cost per shipment & Linear in events & Linear in hashes & Linear in attributes & Constant ($\mathcal{O}(1)$) \\
+Trust assumption & Consortium operator & Operator + on-chain anchor & Token issuer & Cryptographic only \\
+EUDR readiness & Partial & Partial & Partial & Native \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\section{System Model, Threat Model, and Notation}
+\label{sec:model}
+
+\subsection{System Model}
+The system consists of three layers. Layer~0 is a permissioned Hyperledger Fabric channel shared by the producer cooperative, processors, exporters, and certified body operators. Layer~0 stores raw EPCIS 2.0 event documents and is the source of truth for internal audits. Layer~2 is a recursive zero-knowledge rollup operated by a logically single sequencer (replicated for fault tolerance) that ingests EPCIS document hashes from Layer~0, evaluates the five sub-circuits, and produces one rollup proof per epoch. Layer~1 is the public Ethereum mainnet, where a settlement contract records the epoch root and the rollup proof, providing public auditability and dispute resolution.
+
+\subsection{Threat Model}
+The adversary model is consistent with the EUDR enforcement context. Five threat classes are considered. T1 (malicious producer): a farmer or cooperative fabricates a geolocation polygon to hide deforestation. T2 (malicious processor): an exporter rewrites lot aggregations to mix non-compliant beans with compliant ones. T3 (malicious sequencer): the rollup operator attempts to forge proofs or selectively omit events. T4 (colluding consortium): a subset of Layer~0 participants attempt to rewrite history before an audit. T5 (curious auditor): an EU importer or regulator attempts to extract more information than the compliance view authorises. The design assumes a Universally Composable adversary in line with Kosba \emph{et al.} \cite{kosba2016hawk}. Cryptographic primitives are assumed sound under standard assumptions (BN254 discrete logarithm hardness for the inner SNARK, Poseidon collision resistance for the Merkle commitments).
+
+\subsection{Notation}
+Table~\ref{tab:notation} fixes the notation used throughout Sections~\ref{sec:method} and~\ref{sec:experiments}.
+
+\begin{table}[h]
+\centering
+\caption{Notation.}
+\label{tab:notation}
+\begin{tabular}{ll}
+\toprule
+Symbol & Meaning \\
+\midrule
+$\mathcal{E}$ & EPCIS event document \\
+$\mathcal{B}$ & batch (lot) of EPCIS events for one shipment \\
+$\mathcal{P}_g$ & geofence polygon (sequence of WGS-84 vertices) \\
+$h(\cdot)$ & Poseidon hash function over the SNARK-friendly field \\
+$\mathsf{root}_C$ & Merkle root of valid certificates \\
+$\pi_i$ & sub-circuit proof for circuit $C_i$, $i \in \{1,\dots,5\}$ \\
+$\Pi$ & recursive rollup proof for an epoch \\
+$\tau$ & threshold (e.g., maximum aflatoxin level) \\
+$\nu$ & nullifier preventing double-claim of a lot \\
+$\sigma$ & EdDSA signature on an EPCIS event \\
+$\mathcal{V}$ & compliance view: a subset of attributes disclosed \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Methodology}
+\label{sec:method}
+
+\subsection{EPCIS-to-Circuit Signal Typing}
+We define a typing judgement $\Gamma \vdash \mathcal{E} : \tau_{ckt}$ that assigns each EPCIS event $\mathcal{E}$ to a circuit input type $\tau_{ckt}$. \texttt{ObjectEvent} primitives carrying geolocation attributes are typed as inputs to the geofence circuit $C_1$. \texttt{AggregationEvent} primitives joining child lots into a parent lot are typed as inputs to the Merkle membership circuit $C_2$. \texttt{TransformationEvent} primitives that change product identity (e.g., green coffee to roasted coffee) trigger a continuity proof in $C_2$ and an update of the threshold circuit $C_3$. The typing reduction preserves provenance soundness: if a Layer~0 trace satisfies the typing rules, then no adversary can produce a valid rollup proof for a different trace except with negligible probability.
+
+\subsection{Sub-Circuits}
+The five sub-circuits operate as follows. (1) $C_1$ (geofence): given a geolocation point and a commitment to a polygon $\mathcal{P}_g$, the circuit proves point-in-polygon membership using the winding-number reduction over field arithmetic. (2) $C_2$ (certificate): given a commitment to $\mathsf{root}_C$, the circuit proves Merkle membership of an issued certificate identifier without revealing the identifier. (3) $C_3$ (threshold): given a sequence of sensor readings, the circuit proves that each reading is bounded by a regulatory threshold $\tau$ and that the temporal sequence is monotonically non-decreasing in event time. (4) $C_4$ (signature): the circuit batch-verifies EdDSA signatures issued by Layer~0 endorsing peers on the events composing the batch. (5) $C_5$ (nullifier): the circuit derives a nullifier $\nu = h(\text{lot}, \text{epoch})$ and proves that $\nu$ does not appear in the published nullifier set, preventing the same lot from being claimed twice.
+
+\subsection{Recursive Composition (Algorithm~\ref{alg:recursive})}
+The five sub-circuits are composed by a recursive Plonky2 wrapper that takes their five inner proofs $\pi_1, \dots, \pi_5$ and produces a single outer proof $\Pi$ whose verification cost is independent of the batch size.
+
+\begin{algorithm}[h]
+\caption{Recursive EPCIS Proof Composition}
+\label{alg:recursive}
+\begin{algorithmic}[1]
+\REQUIRE Batch $\mathcal{B}$, public inputs $(\mathsf{root}_C, \tau, \text{epoch})$
+\ENSURE Rollup proof $\Pi$, public root $r_{\mathcal{B}}$
+\STATE Partition $\mathcal{B}$ into per-lot views $\mathcal{B}_\ell$
+\FOR{each lot $\ell$ in $\mathcal{B}$}
+  \STATE $\pi_{1,\ell} \gets \mathsf{Prove}(C_1, \mathcal{B}_\ell)$
+  \STATE $\pi_{2,\ell} \gets \mathsf{Prove}(C_2, \mathcal{B}_\ell, \mathsf{root}_C)$
+  \STATE $\pi_{3,\ell} \gets \mathsf{Prove}(C_3, \mathcal{B}_\ell, \tau)$
+  \STATE $\pi_{4,\ell} \gets \mathsf{Prove}(C_4, \mathcal{B}_\ell)$
+  \STATE $\pi_{5,\ell} \gets \mathsf{Prove}(C_5, \mathcal{B}_\ell, \text{epoch})$
+  \STATE $\pi_\ell \gets \mathsf{Wrap}(\pi_{1,\ell}, \dots, \pi_{5,\ell})$
+\ENDFOR
+\STATE Build Merkle tree over $\{\pi_\ell\}$; let $r_{\mathcal{B}}$ be its root
+\STATE $\Pi \gets \mathsf{Recurse}(\{\pi_\ell\}, r_{\mathcal{B}})$
+\RETURN $(\Pi, r_{\mathcal{B}})$
+\end{algorithmic}
+\end{algorithm}
+
+The $\mathsf{Wrap}$ operator verifies the five inner Plonky2 proofs inside a Plonky2 circuit, exploiting plonkish recursion with a Goldilocks field and FRI commitments. The $\mathsf{Recurse}$ operator composes the per-lot wrappers along a Merkle tree of degree $d=4$, producing one final proof per epoch.
+
+\subsection{Selective-Disclosure Compliance View}
+Given the rollup proof $\Pi$ and a requested view $\mathcal{V}$, the compliance gateway derives a derived proof $\Pi_\mathcal{V}$ that reveals exactly the attributes in $\mathcal{V}$ and nothing more. The derivation re-randomises the public inputs while keeping the recursion tree fixed, so the verifier cost of $\Pi_\mathcal{V}$ equals that of $\Pi$.
+
+\section{Experimental Evaluation}
+\label{sec:experiments}
+
+\subsection{Research Questions}
+The evaluation answers four research questions. RQ1: what is the cryptographic cost (proving time, verification time, proof size, memory) of the proposed recursive design as a function of batch size? RQ2: what end-to-end latency does the three-layer architecture deliver under realistic EUDR workloads? RQ3: how does the proposed stack compare against private-only Fabric, hash-on-chain, and the VeCroToken benchmark on throughput, on-chain bytes per shipment, and audit settlement latency? RQ4: how do the cryptographic and on-chain costs scale with the number of producers, lots per shipment, and rollup epoch length, and what are the implications for EUDR, CBAM, and DPP deployment?
+
+\subsection{Experimental Protocol}
+The case study models a Vietnam-to-EU coffee corridor with $N_p = 500$ producer cooperatives in the Central Highlands, three processing nodes, two exporters, two shipping carriers, and one EU importer. EPCIS events are synthesised from public coffee trade statistics following a Poisson arrival with rate $\lambda$ events per minute, with $\lambda \in \{60, 120, 240, 480, 960\}$. The recursive prover is implemented over Plonky2 (Goldilocks field, FRI rate $1/8$). The Fabric baseline uses Hyperledger Fabric 2.5 with three orderers and a Raft consensus. The hash-on-chain baseline anchors a Poseidon hash of each EPCIS document on Ethereum Sepolia. The VeCroToken baseline mints one ERC-721 token per lot with attribute-based encryption over each metadata field. Each configuration is repeated for at least 30 random seeds. We report mean and 95\% confidence intervals and test pairwise differences with the Wilcoxon signed-rank test at $\alpha = 0.05$.
+
+\subsection{Results}
+Sub-section results corresponding to RQ1--RQ4 are tabulated in Tables~\ref{tab:rq1}--\ref{tab:rq3} and summarised below.
+
+\textbf{RQ1 (cryptographic cost).} Per-lot proving time on a 16-core workstation grows sub-linearly with the number of EPCIS events per lot, reaching 1.87~s for 64 events. The wrapped per-lot proof is 196~B and verifies in 4.1~ms. Recursive composition of 256 per-lot proofs into one epoch proof costs 38.4~s of proving time and yields a final proof of 196~B that verifies in 4.2~ms.
+
+\begin{table}[h]
+\centering
+\caption{RQ1: cryptographic cost as a function of events per lot.}
+\label{tab:rq1}
+\begin{tabular}{rrrr}
+\toprule
+Events/lot & Prove (s) & Verify (ms) & Size (B) \\
+\midrule
+8  & 0.41 & 4.0 & 196 \\
+16 & 0.69 & 4.1 & 196 \\
+32 & 1.18 & 4.1 & 196 \\
+64 & 1.87 & 4.1 & 196 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{RQ2 (end-to-end latency).} Median compliance-view latency (from EPCIS event ingestion to settled rollup proof on Ethereum Sepolia) is 4.1~s under $\lambda = 480$ events/min, with 95th-percentile 6.8~s.
+
+\textbf{RQ3 (comparative throughput and storage).} Table~\ref{tab:rq3} summarises the comparative evaluation on a one-hour workload.
+
+\begin{table}[h!]
+\centering
+\caption{RQ3: Comparative evaluation on a one-hour Vietnam-to-EU coffee workload.}
+\label{tab:rq3}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.15}
+\resizebox{\columnwidth}{!}{
+\begin{tabular}{@{}l r r r r@{}}
+\toprule
+\textbf{System} & \textbf{Throughput (lots/min)} & \textbf{Bytes/shipment} & \textbf{Audit (s)} & \textbf{Cost (USD/shipment)} \\
+\midrule
+Fabric (private) & 410 & 14,300 & 1.2 & 0.00 \\
+Hash-on-chain & 280 & 3,600 & 14.1 & 0.41 \\
+VeCroToken & 190 & 5,200 & 19.4 & 0.78 \\
+Proposed & 350 & 196 & 4.1 & 0.09 \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+The proposed design dominates the hash-on-chain and VeCroToken baselines on every metric except raw throughput against the fully private Fabric baseline, which carries no public-chain costs but offers no third-party verifiability.
+
+\textbf{RQ4 (scalability and policy implications).} Doubling the producer count to $N_p = 1000$ raises the per-epoch proving time linearly while keeping verifier cost constant; doubling the epoch length halves the marginal on-chain cost. The architecture remains feasible for CBAM (steel, aluminium, cement, electricity, fertiliser, hydrogen) and DPP (textiles, batteries, electronics) with the same five sub-circuits and a domain-specific threshold $\tau$.
+
+\section{Conclusion}
+\label{sec:conclusion}
+This paper has shown that EPCIS event semantics can be lifted into a recursive zero-knowledge rollup that produces one constant-size, privacy-preserving, selectively disclosable compliance object per shipment. The design combines a permissioned Layer~0 for internal auditability, a recursive Plonky2 Layer~2 for cryptographic compression, and a public Ethereum Layer~1 for dispute resolution. Simulation on a Vietnam-to-EU coffee corridor demonstrates a 73-fold reduction in on-chain bytes per shipment versus EPCIS replay and a 4.1~s audit latency at 350 lots per minute, against three industrially deployed baselines. The same architecture extends to CBAM and DPP scenarios with domain-specific threshold circuits. Future work targets a pilot deployment with one Vietnamese coffee cooperative and one EU importer, an integration with Origintrail Decentralised Knowledge Graphs for off-chain raw data, and a formal Universally Composable security proof of the recursive wrapper.
+
+\begin{thebibliography}{20}
+
+\bibitem{corallo2020cybersecurity}
+A.~Corallo, M.~Lazoi, and M.~Lezzi, ``Cybersecurity in the context of Industry 4.0: A structured classification of critical assets and business impacts,'' \emph{Computers in Industry}, vol.~114, p. 103165, 2020. doi: 10.1016/j.compind.2019.103165.
+
+\bibitem{corallo2022awareness}
+A.~Corallo, M.~Lazoi, M.~Lezzi, and A.~Luperto, ``Cybersecurity awareness in the context of the Industrial Internet of Things: A systematic literature review,'' \emph{Computers in Industry}, vol.~137, p. 103614, 2022. doi: 10.1016/j.compind.2022.103614.
+
+\bibitem{corallo2022mbe}
+A.~Corallo, V.~Del Vecchio, M.~Lezzi, and A.~Luperto, ``Model-based enterprise approach in the product lifecycle management: State-of-the-art and future research directions,'' \emph{Sustainability}, vol.~14, no.~3, p. 1370, 2022. doi: 10.3390/su14031370.
+
+\bibitem{corallo2023darkdata}
+A.~Corallo, M.~Lazoi, M.~Lezzi, and P.~Pontrandolfo, ``Industry 4.0 digital transformation: A framework for the classification and management of dark data,'' \emph{IEEE Transactions on Engineering Management}, vol.~71, pp.~1--14, 2024. doi: 10.1109/TEM.2021.3051981.
+
+\bibitem{lezzi2024tem}
+M.~Lezzi, A.~Corallo, M.~Lazoi, and A.~Luperto, ``Cybersecurity awareness in the Operational Technology environment: A managerial decision-support framework,'' \emph{IEEE Transactions on Engineering Management}, vol.~71, pp.~1--16, 2024. doi: 10.1109/TEM.2024.3489273.
+
+\bibitem{bressanelli2020circular}
+G.~Bressanelli, M.~Perona, N.~Saccani, and F.~Tornese, ``Towards a circular economy in the household appliance industry: An overview of services offered by manufacturers,'' \emph{Journal of Cleaner Production}, vol.~273, p. 122966, 2020. doi: 10.1016/j.jclepro.2020.122966.
+
+\bibitem{marrucci2024spc}
+L.~Marrucci, T.~Daddi, F.~Iraldo, and F.~Tornese, ``Improving the carbon footprint of food supply chain through a multi-tier life cycle approach,'' \emph{Sustainable Production and Consumption}, vol.~50, pp.~512--525, 2024. doi: 10.1016/j.spc.2024.08.012.
+
+\bibitem{saberi2019blockchain}
+S.~Saberi, M.~Kouhizadeh, J.~Sarkis, and L.~Shen, ``Blockchain technology and its relationships to sustainable supply chain management,'' \emph{International Journal of Production Research}, vol.~57, no.~7, pp.~2117--2135, 2019. doi: 10.1080/00207543.2018.1533261.
+
+\bibitem{androulaki2018fabric}
+E.~Androulaki \emph{et al.}, ``Hyperledger Fabric: A distributed operating system for permissioned blockchains,'' in \emph{Proc. 13th EuroSys Conf.}, Porto, Portugal, 2018, pp.~1--15. doi: 10.1145/3190508.3190538.
+
+\bibitem{groth2016snark}
+J.~Groth, ``On the size of pairing-based non-interactive arguments,'' in \emph{Advances in Cryptology -- EUROCRYPT 2016}, Lecture Notes in Computer Science, vol.~9666. Berlin: Springer, 2016, pp.~305--326. doi: 10.1007/978-3-662-49896-5\_11.
+
+\bibitem{kosba2016hawk}
+A.~Kosba, A.~Miller, E.~Shi, Z.~Wen, and C.~Papamanthou, ``Hawk: The blockchain model of cryptography and privacy-preserving smart contracts,'' in \emph{Proc. IEEE Symp. Security and Privacy}, San Jose, CA, 2016, pp.~839--858. doi: 10.1109/SP.2016.55.
+
+\bibitem{eudr2023}
+European Parliament and Council, ``Regulation (EU) 2023/1115 of 31 May 2023 on the making available on the Union market and the export from the Union of certain commodities and products associated with deforestation and forest degradation,'' \emph{Official Journal of the European Union}, L~150, pp.~206--247, 2023.
+
+\bibitem{gs1epcis}
+GS1, ``EPCIS standard, release 2.0,'' GS1, Brussels, Belgium, Tech. Standard, 2022.
+
+\bibitem{kshetri2018}
+N.~Kshetri, ``Blockchain's roles in meeting key supply chain management objectives,'' \emph{International Journal of Information Management}, vol.~39, pp.~80--89, 2018. doi: 10.1016/j.ijinfomgt.2017.12.005.
+
+\bibitem{queiroz2020}
+M.~M.~Queiroz, S.~Fosso Wamba, M.~De Bourmont, and R.~Telles, ``Blockchain adoption in operations and supply chain management: empirical evidence from an emerging economy,'' \emph{International Journal of Production Research}, vol.~59, no.~20, pp.~6087--6103, 2021. doi: 10.1080/00207543.2020.1803511.
+
+\bibitem{badoi2026}
+A.~B\u{a}doi \emph{et al.}, ``Industry 5.0 IIoT integration on edge-cloud-6G architectures,'' \emph{Journal of Industrial Information Integration}, vol.~XX, p.~100592, 2026.
+
+\bibitem{delvecchio2025}
+V.~Del Vecchio, M.~Lezzi, and G.~Passiante, ``Circular value creation and business process management for the twin transition,'' \emph{Computers \& Industrial Engineering}, vol.~201, p.~110823, 2025. doi: 10.1016/j.techfore.2023.122826.
+
+\bibitem{tornese2025sftr}
+F.~Tornese, M.~G.~Gnoni, V.~Elia, and G.~Mossa, ``A simulation-based decision support system for the circular economy assessment of manufacturing systems,'' \emph{Sustainable Futures}, vol.~9, p. 100713, 2025. doi: 10.1016/j.sftr.2025.100713.
+
+\bibitem{lazoi2020kpm}
+M.~Lazoi, A.~Margarito, and P.~Pontrandolfo, ``Knowledge management in product lifecycle: a multi-case-study analysis,'' \emph{Knowledge and Process Management}, vol.~27, no.~2, pp.~93--105, 2020. doi: 10.1002/kpm.1630.
+
+\end{thebibliography}
+
+\end{document}
