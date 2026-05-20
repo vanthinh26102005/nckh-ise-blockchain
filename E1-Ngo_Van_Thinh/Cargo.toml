@@ -1,0 +1,9 @@
+[package]
+name = "e1_ngo_van_thinh"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+plonky2 = { git = "https://github.com/0xPolygonZero/plonky2", tag = "v1.1.0" }
+
