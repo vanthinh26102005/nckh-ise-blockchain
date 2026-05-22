@@ -15,6 +15,17 @@ pub fn run_benchmark(options: BenchmarkOptions) -> Result<()> {
     }
 
     let mut writer = csv::Writer::from_path(&options.out)?;
+    if options.strict_output {
+        writer.write_record([
+            "circuit",
+            "events_per_lot",
+            "seed",
+            "prove_time_s",
+            "verify_time_ms",
+            "proof_size_bytes",
+            "peak_ram_gb",
+        ])?;
+    }
     for &events in &options.events_per_lot {
         let setup_start = Instant::now();
         let cache = TemplateCache::build(events, options.profile, &options.circuits)?;
@@ -40,7 +51,28 @@ pub fn run_benchmark(options: BenchmarkOptions) -> Result<()> {
             )?
         };
         for row in rows {
-            writer.serialize(row)?;
+            if options.strict_output {
+                if row.status != "ok" {
+                    bail!(
+                        "strict benchmark row failed: seed={} events={} circuit={} note={}",
+                        row.seed,
+                        row.events_per_lot,
+                        row.circuit,
+                        row.note
+                    );
+                }
+                writer.write_record([
+                    row.circuit,
+                    row.events_per_lot.to_string(),
+                    row.seed.to_string(),
+                    format!("{:.9}", row.prove_ms / 1000.0),
+                    format!("{:.6}", row.verify_ms),
+                    row.proof_bytes.to_string(),
+                    format!("{:.9}", row.peak_rss_mb / 1024.0),
+                ])?;
+            } else {
+                writer.serialize(row)?;
+            }
             writer.flush()?;
         }
     }
@@ -266,6 +298,21 @@ fn error_row(seed: usize, events: usize, kind: CircuitKind, note: String) -> Met
 }
 
 fn peak_rss_mb() -> f64 {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+            if let Some(kb) = status.lines().find_map(|line| {
+                line.strip_prefix("VmPeak:").and_then(|rest| {
+                    rest.split_whitespace()
+                        .next()
+                        .and_then(|raw| raw.parse::<f64>().ok())
+                })
+            }) {
+                return kb / 1024.0;
+            }
+        }
+    }
+
     unsafe {
         let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
         if libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) != 0 {

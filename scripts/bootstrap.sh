@@ -13,11 +13,13 @@ fi
 
 rustup toolchain install nightly --profile minimal --component rustfmt --component clippy
 
+python3 -m pip install --user --upgrade pandas scipy matplotlib numpy
+
 python3 - <<'PY'
 import importlib.util
-missing = [m for m in ("csv", "statistics") if importlib.util.find_spec(m) is None]
+missing = [m for m in ("pandas", "numpy", "scipy", "matplotlib") if importlib.util.find_spec(m) is None]
 if missing:
-    raise SystemExit(f"Missing Python stdlib modules: {missing}")
+    raise SystemExit(f"Missing Python analysis modules: {missing}")
 print("Python analysis prerequisites OK.")
 PY
 

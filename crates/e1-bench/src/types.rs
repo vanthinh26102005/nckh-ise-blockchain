@@ -10,9 +10,12 @@ pub type F = <C as GenericConfig<D>>::F;
 
 pub const THRESHOLD: u64 = 900;
 pub const RANGE_BITS: usize = 32;
+pub const STRICT_MERKLE_DEPTH: usize = 16;
+pub const STRICT_MERKLE_LEAVES: usize = 1 << STRICT_MERKLE_DEPTH;
 pub const SCHNORR_G: u64 = 7;
 pub const POSEIDON_TAG_CERT: u64 = 2;
 pub const POSEIDON_TAG_NULLIFIER: u64 = 5;
+pub const POSEIDON_TAG_EMPTY: u64 = 6;
 pub const POSEIDON_TAG_POLYGON: u64 = 11;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -59,11 +62,11 @@ impl CircuitKind {
 
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::C1 => "c1_polygon_halfplane",
-            Self::C2 => "c2_poseidon_merkle",
+            Self::C1 => "c1_polygon_outside",
+            Self::C2 => "c2_poseidon_merkle_depth16",
             Self::C3 => "c3_threshold_time",
-            Self::C4 => "c4_schnorr_proxy",
-            Self::C5 => "c5_poseidon_nullifier_set",
+            Self::C4 => "c4_eddsa_style_proxy",
+            Self::C5 => "c5_poseidon_nullifier_empty_leaf",
             Self::Wrapper => "wrapper_recursive_plonky2",
             Self::C1Legacy => "c1_legacy_bbox",
             Self::C4Legacy => "c4_legacy_signature_commitment",
@@ -72,11 +75,11 @@ impl CircuitKind {
 
     pub fn version(self) -> &'static str {
         match self {
-            Self::C1 => "v2-real-convex-polygon",
-            Self::C2 => "v2-real-poseidon-merkle",
+            Self::C1 => "v3-strict-outside-forbidden-polygon",
+            Self::C2 => "v3-strict-poseidon-merkle-depth16",
             Self::C3 => "v2-real-threshold-time",
-            Self::C4 => "v2-proxy-schnorr-field",
-            Self::C5 => "v2-real-nullifier-commitment",
+            Self::C4 => "v3-blocked-eddsa-gadget-uses-explicit-proxy",
+            Self::C5 => "v3-strict-nullifier-empty-leaf-nonmembership",
             Self::Wrapper => "v2-real-recursive-verifier",
             Self::C1Legacy | Self::C4Legacy => "v1-placeholder-compat",
         }
@@ -158,6 +161,7 @@ pub struct BenchmarkOptions {
     pub profile: Profile,
     pub jobs: usize,
     pub include_placeholders: bool,
+    pub strict_output: bool,
 }
 
 #[derive(Serialize)]

@@ -15,6 +15,7 @@ fn parse_args() -> Result<BenchmarkOptions> {
     let mut profile = Profile::CoffeeDefault;
     let mut jobs = 1usize;
     let mut include_placeholders = false;
+    let mut strict_output = false;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -39,6 +40,7 @@ fn parse_args() -> Result<BenchmarkOptions> {
             }
             "--jobs" => jobs = args.next().context("--jobs requires a number")?.parse()?,
             "--include-placeholders" => include_placeholders = true,
+            "--strict-output" => strict_output = true,
             "--help" | "-h" => {
                 print_help();
                 std::process::exit(0);
@@ -65,6 +67,7 @@ fn parse_args() -> Result<BenchmarkOptions> {
         profile,
         jobs,
         include_placeholders,
+        strict_output,
     })
 }
 
@@ -96,6 +99,6 @@ fn parse_circuits(raw: &str) -> Result<Vec<CircuitKind>> {
 
 fn print_help() {
     println!(
-        "Usage: e1-bench --out results/e1/raw.csv --events 8,16,32,64 --seeds 30 --circuits all --profile coffee-default --jobs 1 [--include-placeholders]"
+        "Usage: e1-bench --out results/e1/raw.csv --events 8,16,32,64 --seeds 30 --circuits all --profile coffee-default --jobs 1 [--include-placeholders] [--strict-output]"
     );
 }

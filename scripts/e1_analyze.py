@@ -1,201 +1,206 @@
 #!/usr/bin/env python3
 import argparse
-import csv
-import math
+import json
 import os
-import statistics
-from collections import defaultdict
+import platform
+import subprocess
+from datetime import datetime, timezone
+
+import numpy as np
+import pandas as pd
 
 
-SUMMARY_METRICS = (
-    "prove_ms",
-    "verify_ms",
-    "proof_bytes",
-    "peak_rss_mb",
-    "build_ms",
-    "witness_ms",
-    "setup_ms",
-    "gate_count",
-    "public_inputs",
-    "inner_prove_ms",
-)
-PLOT_METRICS = ("prove_ms", "verify_ms", "proof_bytes", "peak_rss_mb")
+STRICT_COLUMNS = [
+    "circuit",
+    "events_per_lot",
+    "seed",
+    "prove_time_s",
+    "verify_time_ms",
+    "proof_size_bytes",
+    "peak_ram_gb",
+]
 
 
-def mean_ci(values):
-    if not values:
-        return "", "", ""
-    mean = statistics.fmean(values)
-    if len(values) == 1:
+def bootstrap_ci(values, resamples=10_000, seed=20260521):
+    arr = np.asarray(values, dtype=float)
+    if arr.size == 0:
+        return np.nan, np.nan, np.nan
+    if arr.size == 1:
+        mean = float(arr[0])
         return mean, mean, mean
-    stdev = statistics.stdev(values)
-    half_width = 1.96 * stdev / math.sqrt(len(values))
-    return mean, mean - half_width, mean + half_width
+    rng = np.random.default_rng(seed)
+    samples = rng.choice(arr, size=(resamples, arr.size), replace=True)
+    means = samples.mean(axis=1)
+    return float(arr.mean()), float(np.percentile(means, 2.5)), float(np.percentile(means, 97.5))
 
 
-def read_rows(path):
-    with open(path, newline="") as f:
-        return list(csv.DictReader(f))
+def read_raw(path):
+    df = pd.read_csv(path)
+    if set(STRICT_COLUMNS).issubset(df.columns):
+        return df[STRICT_COLUMNS].copy(), True
 
-
-def write_summary(rows, out_path):
-    groups = defaultdict(list)
-    for row in rows:
-        if row["status"] == "ok":
-            groups[(row["events_per_lot"], row["circuit"])].append(row)
-
-    fields = ["events_per_lot", "circuit", "n"]
-    available_metrics = [metric for metric in SUMMARY_METRICS if rows and metric in rows[0]]
-    for metric in available_metrics:
-        fields.extend([f"{metric}_mean", f"{metric}_ci95_low", f"{metric}_ci95_high"])
-
-    with open(out_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
-        writer.writeheader()
-        for (events, circuit), group in sorted(groups.items(), key=lambda x: (int(x[0][0]), x[0][1])):
-            out = {"events_per_lot": events, "circuit": circuit, "n": len(group)}
-            for metric in available_metrics:
-                values = [float(r[metric]) for r in group]
-                mean, low, high = mean_ci(values)
-                out[f"{metric}_mean"] = f"{mean:.6f}" if mean != "" else ""
-                out[f"{metric}_ci95_low"] = f"{low:.6f}" if low != "" else ""
-                out[f"{metric}_ci95_high"] = f"{high:.6f}" if high != "" else ""
-            writer.writerow(out)
-
-
-def write_svg_plot(rows, metric, out_path):
-    groups = defaultdict(list)
-    for row in rows:
-        if row["status"] == "ok":
-            groups[(row["circuit"], int(row["events_per_lot"]))].append(float(row[metric]))
-
-    circuits = sorted({c for c, _ in groups})
-    events = sorted({e for _, e in groups})
-    if not circuits or not events:
-        return
-
-    series = {
-        circuit: [(event, statistics.fmean(groups[(circuit, event)])) for event in events if (circuit, event) in groups]
-        for circuit in circuits
+    required = {
+        "circuit",
+        "events_per_lot",
+        "seed",
+        "prove_ms",
+        "verify_ms",
+        "proof_bytes",
+        "peak_rss_mb",
     }
-    all_values = [value for points in series.values() for _, value in points]
-    max_value = max(all_values) if all_values else 1.0
-    max_value = max(max_value, 1.0)
+    missing = required - set(df.columns)
+    if missing:
+        raise SystemExit(f"Raw CSV missing required columns: {sorted(missing)}")
+    if "status" in df.columns:
+        df = df[df["status"] == "ok"].copy()
+    strict = pd.DataFrame(
+        {
+            "circuit": df["circuit"],
+            "events_per_lot": df["events_per_lot"],
+            "seed": df["seed"],
+            "prove_time_s": df["prove_ms"].astype(float) / 1000.0,
+            "verify_time_ms": df["verify_ms"].astype(float),
+            "proof_size_bytes": df["proof_bytes"].astype(float),
+            "peak_ram_gb": df["peak_rss_mb"].astype(float) / 1024.0,
+        }
+    )
+    return strict, False
 
-    width, height = 960, 560
-    left, right, top, bottom = 80, 30, 40, 80
-    plot_w = width - left - right
-    plot_h = height - top - bottom
-    palette = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#8c564b", "#17becf"]
 
-    def x_scale(event):
-        if len(events) == 1:
-            return left + plot_w / 2
-        return left + (event - min(events)) * plot_w / (max(events) - min(events))
+def write_table(df, out_path):
+    metrics = ["prove_time_s", "verify_time_ms", "proof_size_bytes", "peak_ram_gb"]
+    rows = []
+    for (circuit, events), group in df.groupby(["circuit", "events_per_lot"], sort=True):
+        row = {"circuit": circuit, "events_per_lot": int(events), "n": int(len(group))}
+        for metric in metrics:
+            mean, low, high = bootstrap_ci(group[metric].to_numpy())
+            row[f"{metric}_mean"] = mean
+            row[f"{metric}_ci95_low"] = low
+            row[f"{metric}_ci95_high"] = high
+        rows.append(row)
+    pd.DataFrame(rows).sort_values(["circuit", "events_per_lot"]).to_csv(out_path, index=False)
 
-    def y_scale(value):
-        return top + plot_h - (value / max_value) * plot_h
 
-    title = {
-        "prove_ms": "Prove time (ms)",
-        "verify_ms": "Verify time (ms)",
-        "proof_bytes": "Compressed proof size (bytes)",
-        "peak_rss_mb": "Peak RSS (MB)",
-    }[metric]
+def write_plots(df, out_path):
+    import matplotlib.pyplot as plt
 
-    lines = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
-        '<rect width="100%" height="100%" fill="white"/>',
-        f'<text x="{width/2}" y="24" text-anchor="middle" font-family="Arial" font-size="18">{title}</text>',
-        f'<line x1="{left}" y1="{top}" x2="{left}" y2="{top+plot_h}" stroke="#222"/>',
-        f'<line x1="{left}" y1="{top+plot_h}" x2="{left+plot_w}" y2="{top+plot_h}" stroke="#222"/>',
-    ]
+    metrics = ["prove_time_s", "verify_time_ms", "proof_size_bytes", "peak_ram_gb"]
+    titles = ["Prove Time (s)", "Verify Time (ms)", "Proof Size (bytes)", "Peak RAM (GB)"]
+    fig, axes = plt.subplots(1, 4, figsize=(18, 4.8))
 
-    for event in events:
-        x = x_scale(event)
-        lines.append(f'<line x1="{x:.2f}" y1="{top+plot_h}" x2="{x:.2f}" y2="{top+plot_h+6}" stroke="#222"/>')
-        lines.append(f'<text x="{x:.2f}" y="{top+plot_h+24}" text-anchor="middle" font-family="Arial" font-size="12">{event}</text>')
+    for ax, metric, title in zip(axes, metrics, titles):
+        for circuit, group in df.groupby("circuit", sort=True):
+            series = group.groupby("events_per_lot")[metric].mean().sort_index()
+            ax.plot(series.index, series.values, marker="o", linewidth=1.8, label=circuit)
+        ax.set_title(title)
+        ax.set_xlabel("Events per Lot")
+        ax.grid(True, alpha=0.25)
+    axes[-1].legend(fontsize=7, loc="best")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
 
-    for i in range(5):
-        value = max_value * i / 4
-        y = y_scale(value)
-        lines.append(f'<line x1="{left-6}" y1="{y:.2f}" x2="{left}" y2="{y:.2f}" stroke="#222"/>')
-        lines.append(f'<text x="{left-10}" y="{y+4:.2f}" text-anchor="end" font-family="Arial" font-size="12">{value:.1f}</text>')
-        lines.append(f'<line x1="{left}" y1="{y:.2f}" x2="{left+plot_w}" y2="{y:.2f}" stroke="#eee"/>')
 
-    for idx, circuit in enumerate(circuits):
-        color = palette[idx % len(palette)]
-        points = series[circuit]
-        if not points:
-            continue
-        polyline = " ".join(f"{x_scale(e):.2f},{y_scale(v):.2f}" for e, v in points)
-        lines.append(f'<polyline points="{polyline}" fill="none" stroke="{color}" stroke-width="2"/>')
-        for event, value in points:
-            lines.append(f'<circle cx="{x_scale(event):.2f}" cy="{y_scale(value):.2f}" r="4" fill="{color}"/>')
-        legend_y = top + 18 + idx * 20
-        lines.append(f'<rect x="{left+plot_w-140}" y="{legend_y-10}" width="12" height="12" fill="{color}"/>')
-        lines.append(f'<text x="{left+plot_w-122}" y="{legend_y}" font-family="Arial" font-size="12">{circuit}</text>')
+def command_output(cmd):
+    try:
+        return subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True).strip()
+    except Exception:
+        return None
 
-    lines.append(f'<text x="{left+plot_w/2}" y="{height-24}" text-anchor="middle" font-family="Arial" font-size="14">events/lot</text>')
-    lines.append("</svg>")
 
+def ram_backend():
+    if platform.system().lower() == "linux" and os.path.exists("/proc/self/status"):
+        return "linux_proc_status_vmpeak"
+    return "getrusage_ru_maxrss"
+
+
+def write_metadata(df, raw_path, out_path, command):
+    metadata = {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "command": command,
+        "raw_csv": raw_path,
+        "rows": int(len(df)),
+        "circuits": sorted(df["circuit"].unique().tolist()),
+        "events_per_lot": sorted(int(v) for v in df["events_per_lot"].unique()),
+        "seeds_per_cell": {
+            f"{circuit}:{int(events)}": int(len(group["seed"].unique()))
+            for (circuit, events), group in df.groupby(["circuit", "events_per_lot"])
+        },
+        "rustc": command_output(["rustc", "--version"]),
+        "cargo": command_output(["cargo", "--version"]),
+        "plonky2_rev": "5d9da5a65bbcba2c66eb29c035090eb2e9ccb05f",
+        "python": platform.python_version(),
+        "os": platform.platform(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "cpu_logical": os.cpu_count(),
+        "ram_backend": ram_backend(),
+        "proof_size_policy": "measured Plonky2 compressed proof bytes; 196 bytes is paper target, not forced",
+        "c4_status": "explicit algebraic proxy/blocker until a compatible Ed25519/EdDSA Plonky2 gadget is integrated",
+    }
     with open(out_path, "w") as f:
-        f.write("\n".join(lines))
+        json.dump(metadata, f, indent=2)
+        f.write("\n")
 
 
-def write_report(rows, out_path):
-    ok_rows = [r for r in rows if r["status"] == "ok"]
-    error_rows = [r for r in rows if r["status"] != "ok"]
-    circuits = sorted({r["circuit"] for r in rows})
+def write_report(df, out_path):
     lines = [
-        "# E1 Benchmark Report",
+        "# E1 Strict Benchmark Report",
         "",
-        f"- Rows: {len(rows)}",
-        f"- OK rows: {len(ok_rows)}",
-        f"- Error rows: {len(error_rows)}",
+        f"- Rows: {len(df)}",
+        f"- Circuits: {', '.join(sorted(df['circuit'].unique()))}",
+        "- Proof size is measured from compressed Plonky2 proofs. Target gap is reported separately from raw CSV.",
+        "- C4 is not a paper-final Ed25519 result yet; it is marked as a dependency blocker/proxy in metadata.",
         "",
-        "## Circuit Status",
-        "",
-        "| Circuit | Version | Rows | Mean prove ms | Mean verify ms | Mean proof bytes | Notes |",
-        "|---|---:|---:|---:|---:|---:|---|",
+        "| Circuit | Rows | Mean prove s | Mean verify ms | Mean proof bytes | Target gap bytes |",
+        "|---|---:|---:|---:|---:|---:|",
     ]
-    for circuit in circuits:
-        group = [r for r in ok_rows if r["circuit"] == circuit]
-        any_row = next((r for r in rows if r["circuit"] == circuit), None)
-        version = any_row.get("circuit_version", "") if any_row else ""
-        note = any_row.get("note", "") if any_row else ""
-        if group:
-            prove = statistics.fmean(float(r["prove_ms"]) for r in group)
-            verify = statistics.fmean(float(r["verify_ms"]) for r in group)
-            proof = statistics.fmean(float(r["proof_bytes"]) for r in group)
-            lines.append(f"| {circuit} | {version} | {len(group)} | {prove:.3f} | {verify:.3f} | {proof:.1f} | {note} |")
-        else:
-            lines.append(f"| {circuit} | {version} | 0 |  |  |  | {note} |")
-
-    if error_rows:
-        lines.extend(["", "## Errors", ""])
-        for row in error_rows[:20]:
-            lines.append(f"- seed={row['seed']} events={row['events_per_lot']} circuit={row['circuit']}: {row['note']}")
-
+    for circuit, group in df.groupby("circuit", sort=True):
+        proof = float(group["proof_size_bytes"].mean())
+        lines.append(
+            f"| {circuit} | {len(group)} | {group['prove_time_s'].mean():.6f} | "
+            f"{group['verify_time_ms'].mean():.3f} | {proof:.1f} | {proof - 196:.1f} |"
+        )
     with open(out_path, "w") as f:
         f.write("\n".join(lines) + "\n")
+
+
+def validate_grid(df, expected_seeds):
+    bad = []
+    for (circuit, events), group in df.groupby(["circuit", "events_per_lot"]):
+        n = len(set(group["seed"]))
+        if expected_seeds is not None and n != expected_seeds:
+            bad.append(f"{circuit}/{events}: {n} seeds")
+    if bad:
+        raise SystemExit("Invalid seed count per cell: " + "; ".join(bad))
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw", required=True)
-    parser.add_argument("--out-dir", required=True)
+    parser.add_argument("--out-dir", default=None)
+    parser.add_argument("--table-out", default=None)
+    parser.add_argument("--plots-out", default=None)
+    parser.add_argument("--metadata-out", default=None)
+    parser.add_argument("--report-out", default=None)
+    parser.add_argument("--expected-seeds", type=int, default=None)
+    parser.add_argument("--command", default="")
     args = parser.parse_args()
 
-    rows = read_rows(args.raw)
-    os.makedirs(args.out_dir, exist_ok=True)
-    figs_dir = os.path.join(args.out_dir, "figs")
-    os.makedirs(figs_dir, exist_ok=True)
+    df, _ = read_raw(args.raw)
+    validate_grid(df, args.expected_seeds)
 
-    write_summary(rows, os.path.join(args.out_dir, "summary.csv"))
-    for metric in PLOT_METRICS:
-        write_svg_plot(rows, metric, os.path.join(figs_dir, f"{metric}.svg"))
-    write_report(rows, os.path.join(args.out_dir, "report.md"))
+    out_dir = args.out_dir or os.path.dirname(args.raw) or "."
+    os.makedirs(out_dir, exist_ok=True)
+    table_out = args.table_out or os.path.join(out_dir, "summary.csv")
+    plots_out = args.plots_out or os.path.join(out_dir, "e1_plots.png")
+    metadata_out = args.metadata_out or os.path.join(out_dir, "e1_metadata.json")
+    report_out = args.report_out or os.path.join(out_dir, "report.md")
+
+    write_table(df, table_out)
+    write_plots(df, plots_out)
+    write_metadata(df, args.raw, metadata_out, args.command)
+    write_report(df, report_out)
 
 
 if __name__ == "__main__":

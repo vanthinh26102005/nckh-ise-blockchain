@@ -1,10 +1,10 @@
 use crate::synthetic::{poseidon_hash, tampered_signature_lot, SyntheticLot};
 use crate::types::{
-    f, CircuitKind, Profile, C, D, F, POSEIDON_TAG_CERT, POSEIDON_TAG_NULLIFIER,
-    POSEIDON_TAG_POLYGON, RANGE_BITS, SCHNORR_G, THRESHOLD,
+    f, CircuitKind, Profile, C, D, F, POSEIDON_TAG_CERT, POSEIDON_TAG_EMPTY,
+    POSEIDON_TAG_NULLIFIER, POSEIDON_TAG_POLYGON, RANGE_BITS, SCHNORR_G, STRICT_MERKLE_DEPTH,
+    STRICT_MERKLE_LEAVES, THRESHOLD,
 };
 use anyhow::{bail, Result};
-use plonky2::field::types::Field;
 use plonky2::hash::hash_types::{HashOut, HashOutTarget};
 use plonky2::hash::merkle_proofs::MerkleProofTarget;
 use plonky2::hash::merkle_tree::MerkleTree;
@@ -13,7 +13,6 @@ use plonky2::iop::target::{BoolTarget, Target};
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
 use plonky2::plonk::circuit_data::{CircuitConfig, CircuitData};
-use plonky2::plonk::config::Hasher;
 use plonky2::plonk::proof::{ProofWithPublicInputs, ProofWithPublicInputsTarget};
 use std::collections::HashMap;
 use std::time::Instant;
@@ -90,6 +89,8 @@ pub struct C1Targets {
     points: Vec<(Target, Target)>,
     vertices: Vec<(Target, Target)>,
     commitment: HashOutTarget,
+    outside_selectors: Vec<Vec<BoolTarget>>,
+    outside_margins: Vec<Vec<Target>>,
 }
 
 pub struct C2Targets {
@@ -117,11 +118,11 @@ pub struct SchnorrTargets {
 
 pub struct C5Targets {
     lot_id: Target,
-    epoch: Target,
+    secret: Target,
     nullifier: HashOutTarget,
-    previous: Vec<HashOutTarget>,
-    previous_root: HashOutTarget,
-    inverses: Vec<Target>,
+    empty_root: HashOutTarget,
+    empty_index_bits: Vec<BoolTarget>,
+    empty_proof: MerkleProofTarget,
 }
 
 pub struct WrapperTargets {
@@ -249,6 +250,8 @@ fn build_c1_polygon(events: usize, profile: Profile) -> Result<CircuitTemplate> 
     let mut builder = new_builder();
     let mut points = Vec::with_capacity(events);
     let mut vertices = Vec::with_capacity(profile.polygon().len());
+    let mut outside_selectors = Vec::with_capacity(events);
+    let mut outside_margins = Vec::with_capacity(events);
     let mut commitment_inputs = vec![builder.constant(f(POSEIDON_TAG_POLYGON))];
 
     for _ in profile.polygon() {
@@ -266,12 +269,26 @@ fn build_c1_polygon(events: usize, profile: Profile) -> Result<CircuitTemplate> 
         let x = builder.add_virtual_target();
         let y = builder.add_virtual_target();
         points.push((x, y));
+        let mut selectors = Vec::with_capacity(vertices.len());
+        let mut margins = Vec::with_capacity(vertices.len());
         for i in 0..vertices.len() {
             let (x1, y1) = vertices[i];
             let (x2, y2) = vertices[(i + 1) % vertices.len()];
             let slack = orientation_slack_target(&mut builder, x, y, x1, y1, x2, y2);
-            builder.range_check(slack, RANGE_BITS);
+            let selected = builder.add_virtual_bool_target_safe();
+            let margin = builder.add_virtual_target();
+            builder.range_check(margin, RANGE_BITS);
+            let one = builder.one();
+            let outside_relation = builder.add_many([slack, margin, one]);
+            let gated = builder.mul(selected.target, outside_relation);
+            builder.assert_zero(gated);
+            selectors.push(selected);
+            margins.push(margin);
         }
+        let selector_sum = builder.add_many(selectors.iter().map(|s| s.target));
+        builder.assert_one(selector_sum);
+        outside_selectors.push(selectors);
+        outside_margins.push(margins);
     }
 
     Ok(finish_template(
@@ -281,17 +298,20 @@ fn build_c1_polygon(events: usize, profile: Profile) -> Result<CircuitTemplate> 
             points,
             vertices,
             commitment,
+            outside_selectors,
+            outside_margins,
         }),
         start,
-        "research;real:c1 proves fixed-point point-in-convex-polygon by cross-product orientation; polygon vertices are private and commitment is public",
+        "research;real:c1 proves every private point is outside the committed forbidden polygon by an outside-edge crossing witness; boundary is treated as forbidden",
     ))
 }
 
 fn build_c2_poseidon_merkle(events: usize) -> Result<CircuitTemplate> {
+    let _ = events;
     let start = Instant::now();
     let mut builder = new_builder();
     let cert = builder.add_virtual_target();
-    let index_bits = (0..events.trailing_zeros() as usize)
+    let index_bits = (0..STRICT_MERKLE_DEPTH)
         .map(|_| builder.add_virtual_bool_target_safe())
         .collect::<Vec<_>>();
     let root = builder.add_virtual_hash_public_input();
@@ -309,7 +329,7 @@ fn build_c2_poseidon_merkle(events: usize) -> Result<CircuitTemplate> {
             proof,
         }),
         start,
-        "research;real:c2 verifies private certificate membership against a Poseidon Merkle root",
+        "research;real:c2 verifies private certificate membership against a public Poseidon Merkle root with fixed depth 16 (65,536 leaves)",
     ))
 }
 
@@ -388,50 +408,48 @@ fn build_c4_schnorr(events: usize) -> Result<CircuitTemplate> {
         builder,
         TemplateTargets::C4(C4Targets { sigs }),
         start,
-        "research;proxy:c4 verifies a Schnorr-like algebraic signature over the field; not EdDSA production",
+        "blocker;proxy:c4 remains an explicit algebraic signature proxy because no compatible Ed25519/EdDSA Plonky2 gadget is pinned; do not use as EdDSA result",
     ))
 }
 
 fn build_c5_nullifier(events: usize, profile: Profile) -> Result<CircuitTemplate> {
+    let _ = (events, profile);
     let start = Instant::now();
-    let previous_count = profile.previous_nullifier_count(events);
     let mut builder = new_builder();
     let lot_id = builder.add_virtual_target();
-    let epoch = builder.add_virtual_target();
+    let secret = builder.add_virtual_target();
     let tag = builder.constant(f(POSEIDON_TAG_NULLIFIER));
-    let nullifier_calc = builder.hash_n_to_hash_no_pad::<PoseidonHash>(vec![lot_id, epoch, tag]);
+    let nullifier_calc = builder.hash_n_to_hash_no_pad::<PoseidonHash>(vec![lot_id, secret, tag]);
     let nullifier = builder.add_virtual_hash_public_input();
     builder.connect_hashes(nullifier_calc, nullifier);
 
-    let mut previous = Vec::with_capacity(previous_count);
-    let mut inverses = Vec::with_capacity(previous_count);
-    for _ in 0..previous_count {
-        let prev = builder.add_virtual_hash();
-        let inv = builder.add_virtual_target();
-        let diff = builder.sub(nullifier.elements[0], prev.elements[0]);
-        let product = builder.mul(diff, inv);
-        builder.assert_one(product);
-        previous.push(prev);
-        inverses.push(inv);
-    }
-
-    let previous_root_calc = merkle_root_targets(&mut builder, previous.clone());
-    let previous_root = builder.add_virtual_hash_public_input();
-    builder.connect_hashes(previous_root_calc, previous_root);
+    let empty_index_bits = (0..STRICT_MERKLE_DEPTH)
+        .map(|_| builder.add_virtual_bool_target_safe())
+        .collect::<Vec<_>>();
+    let empty_root = builder.add_virtual_hash_public_input();
+    let empty_proof = virtual_merkle_proof(&mut builder, STRICT_MERKLE_DEPTH);
+    let empty = builder.constant(f(0));
+    let empty_tag = builder.constant(f(POSEIDON_TAG_EMPTY));
+    builder.verify_merkle_proof::<PoseidonHash>(
+        vec![empty, empty_tag],
+        &empty_index_bits,
+        empty_root,
+        &empty_proof,
+    );
 
     Ok(finish_template(
         CircuitKind::C5,
         builder,
         TemplateTargets::C5(C5Targets {
             lot_id,
-            epoch,
+            secret,
             nullifier,
-            previous,
-            previous_root,
-            inverses,
+            empty_root,
+            empty_index_bits,
+            empty_proof,
         }),
         start,
-        "research;real:c5 proves Poseidon nullifier derivation and non-membership against a committed bounded nullifier set",
+        "research;real:c5 proves Poseidon(lot_id, secret) nullifier derivation plus a depth-16 Merkle empty-leaf non-membership witness",
     ))
 }
 
@@ -530,9 +548,35 @@ fn set_c1_witness(
         pw.set_target(*x_t, f(x))?;
         pw.set_target(*y_t, f(y))?;
     }
-    for ((x_t, y_t), &(x, y)) in targets.points.iter().zip(&lot.coords) {
+    for (point_idx, ((x_t, y_t), &(x, y))) in targets.points.iter().zip(&lot.coords).enumerate() {
         pw.set_target(*x_t, f(x))?;
         pw.set_target(*y_t, f(y))?;
+        let outside_edge = lot
+            .polygon
+            .iter()
+            .enumerate()
+            .find_map(|(edge_idx, _)| {
+                let slack = orientation_slack_value(x, y, &lot.polygon, edge_idx);
+                (slack < 0).then_some((edge_idx, (-slack - 1) as u64))
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!("point ({x},{y}) is inside or on the forbidden polygon")
+            })?;
+        for (edge_idx, (selector, margin)) in targets.outside_selectors[point_idx]
+            .iter()
+            .zip(&targets.outside_margins[point_idx])
+            .enumerate()
+        {
+            pw.set_bool_target(*selector, edge_idx == outside_edge.0)?;
+            pw.set_target(
+                *margin,
+                f(if edge_idx == outside_edge.0 {
+                    outside_edge.1
+                } else {
+                    0
+                }),
+            )?;
+        }
     }
     Ok(())
 }
@@ -543,10 +587,10 @@ fn set_c2_witness(
     lot: &SyntheticLot,
     seed: usize,
 ) -> Result<()> {
-    let index = seed % lot.cert_ids.len();
+    let index = seed % STRICT_MERKLE_LEAVES;
     let (tree, root) = cert_tree(lot);
     let proof = tree.prove(index);
-    pw.set_target(targets.cert, f(lot.cert_ids[index]))?;
+    pw.set_target(targets.cert, cert_leaf_value(lot, index))?;
     pw.set_hash_target(targets.root, root)?;
     for (bit_target, bit) in targets
         .index_bits
@@ -599,23 +643,23 @@ fn set_c5_witness(
     profile: Profile,
     force_duplicate: bool,
 ) -> Result<()> {
-    let nullifier = nullifier_hash(lot.lot_id, lot.epoch);
-    let previous = previous_nullifiers(lot, profile, force_duplicate);
-    let previous_root = merkle_root_values(&previous);
+    let nullifier = nullifier_hash(lot.lot_id, lot.secret);
+    let empty_index = seedless_empty_index(lot);
+    let (tree, empty_root) = nullifier_tree_with_empty_leaf(lot, profile, force_duplicate);
+    let proof = tree.prove(empty_index);
     pw.set_target(targets.lot_id, f(lot.lot_id))?;
-    pw.set_target(targets.epoch, f(lot.epoch))?;
+    pw.set_target(targets.secret, f(lot.secret))?;
     pw.set_hash_target(targets.nullifier, nullifier)?;
-    pw.set_hash_target(targets.previous_root, previous_root)?;
-    for ((target, inv_target), prev) in targets.previous.iter().zip(&targets.inverses).zip(previous)
+    pw.set_hash_target(targets.empty_root, empty_root)?;
+    for (bit_target, bit) in targets
+        .empty_index_bits
+        .iter()
+        .zip(index_bits(empty_index, STRICT_MERKLE_DEPTH))
     {
-        if prev.elements[0] == nullifier.elements[0] {
-            bail!("generated duplicate nullifier for non-membership test");
-        }
-        pw.set_hash_target(*target, prev)?;
-        pw.set_target(
-            *inv_target,
-            (nullifier.elements[0] - prev.elements[0]).inverse(),
-        )?;
+        pw.set_bool_target(*bit_target, bit)?;
+    }
+    for (target, sibling) in targets.empty_proof.siblings.iter().zip(proof.siblings) {
+        pw.set_hash_target(*target, sibling)?;
     }
     Ok(())
 }
@@ -653,7 +697,7 @@ pub fn invalid_c1_outside(
     profile: Profile,
 ) -> Result<(CircuitTemplate, PartialWitness<F>)> {
     let template = build_c1_polygon(events, profile)?;
-    let lot = crate::synthetic::outside_lot(3, events, profile);
+    let lot = crate::synthetic::inside_forbidden_lot(3, events, profile);
     let witness = witness_for(&template, &lot, 3, profile)?.witness;
     Ok((template, witness))
 }
@@ -699,14 +743,20 @@ fn virtual_merkle_proof(builder: &mut CircuitBuilder<F, D>, len: usize) -> Merkl
 }
 
 fn cert_tree(lot: &SyntheticLot) -> (MerkleTree<F, PoseidonHash>, HashOut<F>) {
-    let leaves = lot
-        .cert_ids
-        .iter()
-        .map(|&id| vec![f(id), f(POSEIDON_TAG_CERT)])
+    let leaves = (0..STRICT_MERKLE_LEAVES)
+        .map(|index| vec![cert_leaf_value(lot, index), f(POSEIDON_TAG_CERT)])
         .collect::<Vec<_>>();
     let tree = MerkleTree::<F, PoseidonHash>::new(leaves, 0);
     let root = tree.cap.0[0];
     (tree, root)
+}
+
+fn cert_leaf_value(lot: &SyntheticLot, index: usize) -> F {
+    if index < lot.cert_ids.len() {
+        f(lot.cert_ids[index])
+    } else {
+        f(50_000_000 + lot.lot_id + index as u64)
+    }
 }
 
 fn index_bits(index: usize, bits: usize) -> Vec<bool> {
@@ -740,65 +790,51 @@ fn orientation_slack_target(
     builder.sub(left, right)
 }
 
-fn nullifier_hash(lot_id: u64, epoch: u64) -> HashOut<F> {
-    poseidon_hash(&[f(lot_id), f(epoch), f(POSEIDON_TAG_NULLIFIER)])
+fn orientation_slack_value(px: u64, py: u64, polygon: &[(u64, u64)], edge_idx: usize) -> i128 {
+    let (x1, y1) = polygon[edge_idx];
+    let (x2, y2) = polygon[(edge_idx + 1) % polygon.len()];
+    let dx = x2 as i128 - x1 as i128;
+    let dy = y2 as i128 - y1 as i128;
+    dx * (py as i128 - y1 as i128) - dy * (px as i128 - x1 as i128)
 }
 
-fn previous_nullifiers(
+fn nullifier_hash(lot_id: u64, secret: u64) -> HashOut<F> {
+    poseidon_hash(&[f(lot_id), f(secret), f(POSEIDON_TAG_NULLIFIER)])
+}
+
+fn seedless_empty_index(lot: &SyntheticLot) -> usize {
+    (lot.lot_id as usize) & (STRICT_MERKLE_LEAVES - 1)
+}
+
+fn nullifier_tree_with_empty_leaf(
     lot: &SyntheticLot,
-    profile: Profile,
+    _profile: Profile,
     force_duplicate: bool,
-) -> Vec<HashOut<F>> {
-    let count = profile.previous_nullifier_count(lot.readings.len());
-    let duplicate = nullifier_hash(lot.lot_id, lot.epoch);
-    (0..count)
-        .map(|i| {
-            if force_duplicate && i == count / 2 {
-                duplicate
+) -> (MerkleTree<F, PoseidonHash>, HashOut<F>) {
+    let empty_index = seedless_empty_index(lot);
+    let used_nullifier = nullifier_hash(lot.lot_id, lot.secret);
+    let leaves = (0..STRICT_MERKLE_LEAVES)
+        .map(|index| {
+            if index == empty_index && !force_duplicate {
+                vec![f(0), f(POSEIDON_TAG_EMPTY)]
+            } else if index == empty_index && force_duplicate {
+                vec![used_nullifier.elements[0], f(POSEIDON_TAG_NULLIFIER)]
             } else {
-                poseidon_hash(&[
-                    f(lot.lot_id + 41 + i as u64),
-                    f(lot.epoch + 7 + i as u64),
+                vec![
+                    poseidon_hash(&[
+                        f(lot.lot_id + 41 + index as u64),
+                        f(lot.secret + 7 + index as u64),
+                        f(POSEIDON_TAG_NULLIFIER),
+                    ])
+                    .elements[0],
                     f(POSEIDON_TAG_NULLIFIER),
-                ])
+                ]
             }
         })
-        .collect()
-}
-
-fn merkle_root_values(values: &[HashOut<F>]) -> HashOut<F> {
-    let mut level = values.to_vec();
-    while level.len() > 1 {
-        level = level
-            .chunks_exact(2)
-            .map(|pair| PoseidonHash::two_to_one(pair[0], pair[1]))
-            .collect();
-    }
-    level[0]
-}
-
-fn merkle_root_targets(
-    builder: &mut CircuitBuilder<F, D>,
-    values: Vec<HashOutTarget>,
-) -> HashOutTarget {
-    let mut level = values;
-    while level.len() > 1 {
-        level = level
-            .chunks_exact(2)
-            .map(|pair| two_to_one_target(builder, pair[0], pair[1]))
-            .collect();
-    }
-    level[0]
-}
-
-fn two_to_one_target(
-    builder: &mut CircuitBuilder<F, D>,
-    left: HashOutTarget,
-    right: HashOutTarget,
-) -> HashOutTarget {
-    let mut inputs = left.elements.to_vec();
-    inputs.extend(right.elements);
-    builder.hash_n_to_hash_no_pad::<PoseidonHash>(inputs)
+        .collect::<Vec<_>>();
+    let tree = MerkleTree::<F, PoseidonHash>::new(leaves, 0);
+    let root = tree.cap.0[0];
+    (tree, root)
 }
 
 #[cfg(test)]
@@ -820,7 +856,7 @@ mod tests {
     }
 
     #[test]
-    fn c1_inside_polygon_passes() -> Result<()> {
+    fn c1_outside_forbidden_polygon_passes() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let template = build_c1_polygon(8, profile)?;
         let lot = synthetic_lot(1, 8, profile);
@@ -828,9 +864,8 @@ mod tests {
     }
 
     #[test]
-    fn c1_outside_polygon_fails() -> Result<()> {
-        let (template, witness) = invalid_c1_outside(8, Profile::CoffeeSmall)?;
-        assert_prove_fails(&template, witness);
+    fn c1_inside_forbidden_polygon_fails() -> Result<()> {
+        assert!(invalid_c1_outside(8, Profile::CoffeeSmall).is_err());
         Ok(())
     }
 
@@ -888,7 +923,8 @@ mod tests {
 
     #[test]
     fn c5_duplicate_nullifier_fails() {
-        assert!(invalid_c5_duplicate(8, Profile::CoffeeSmall).is_err());
+        let (template, witness) = invalid_c5_duplicate(8, Profile::CoffeeSmall).unwrap();
+        assert_prove_fails(&template, witness);
     }
 
     #[test]

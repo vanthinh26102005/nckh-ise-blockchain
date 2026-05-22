@@ -12,6 +12,7 @@ pub struct SyntheticLot {
     pub coords: Vec<(u64, u64)>,
     pub cert_ids: Vec<u64>,
     pub lot_id: u64,
+    pub secret: u64,
     pub epoch: u64,
     pub polygon: Vec<(u64, u64)>,
     pub signatures: Vec<ToySignature>,
@@ -42,11 +43,12 @@ pub fn synthetic_lot(seed: u64, events: usize, profile: Profile) -> SyntheticLot
     let timestamps: Vec<u64> = (0..events)
         .map(|i| 1_700_000_000 + seed * 1000 + i as u64 * 15)
         .collect();
-    let coords = inside_points(&mut rng, events, profile);
+    let coords = compliant_points_outside_forbidden_polygon(&mut rng, events, profile);
     let cert_ids: Vec<u64> = (0..events)
         .map(|_| rng.gen_range(10_000..=999_999))
         .collect();
     let lot_id = rng.gen_range(1_000_000..=9_999_999);
+    let secret = rng.gen_range(100_000_000..=999_999_999);
     let epoch = 1_800_000_000 + seed;
     let signatures = cert_ids
         .iter()
@@ -61,6 +63,7 @@ pub fn synthetic_lot(seed: u64, events: usize, profile: Profile) -> SyntheticLot
         coords,
         cert_ids,
         lot_id,
+        secret,
         epoch,
         polygon,
         signatures,
@@ -75,21 +78,29 @@ fn profile_tag(profile: Profile) -> u64 {
     }
 }
 
-fn inside_points(rng: &mut ChaCha20Rng, events: usize, profile: Profile) -> Vec<(u64, u64)> {
+fn compliant_points_outside_forbidden_polygon(
+    rng: &mut ChaCha20Rng,
+    events: usize,
+    profile: Profile,
+) -> Vec<(u64, u64)> {
     let (x0, x1, y0, y1) = match profile {
-        Profile::CoffeeSmall => (1040, 1390, 2180, 2450),
-        Profile::CoffeeDefault => (1030, 1450, 2180, 2520),
-        Profile::Stress => (1010, 1490, 2160, 2530),
+        Profile::CoffeeSmall => (1780, 2200, 2800, 3200),
+        Profile::CoffeeDefault => (1820, 2300, 2860, 3300),
+        Profile::Stress => (1900, 2450, 2950, 3500),
     };
     (0..events)
         .map(|_| (rng.gen_range(x0..=x1), rng.gen_range(y0..=y1)))
         .collect()
 }
 
-pub fn outside_lot(seed: u64, events: usize, profile: Profile) -> SyntheticLot {
+pub fn inside_forbidden_lot(seed: u64, events: usize, profile: Profile) -> SyntheticLot {
     let mut lot = synthetic_lot(seed, events, profile);
     if let Some(first) = lot.coords.first_mut() {
-        *first = (300, 300);
+        *first = match profile {
+            Profile::CoffeeSmall => (1200, 2300),
+            Profile::CoffeeDefault => (1240, 2340),
+            Profile::Stress => (1260, 2360),
+        };
     }
     lot
 }
