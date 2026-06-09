@@ -1,19 +1,16 @@
-use plonky2::field::types::Field;
-use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
-use serde::Serialize;
+use p3_goldilocks::Goldilocks;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
 
-pub const D: usize = 2;
-pub type C = PoseidonGoldilocksConfig;
-pub type F = <C as GenericConfig<D>>::F;
+pub type F = Goldilocks;
 
 pub const THRESHOLD: u64 = 900;
 pub const RANGE_BITS: usize = 32;
 pub const STRICT_MERKLE_DEPTH: usize = 16;
 pub const STRICT_MERKLE_LEAVES: usize = 1 << STRICT_MERKLE_DEPTH;
-pub const SCHNORR_G: u64 = 7;
 pub const POSEIDON_TAG_CERT: u64 = 2;
+pub const POSEIDON_TAG_ACTOR: u64 = 4;
 pub const POSEIDON_TAG_NULLIFIER: u64 = 5;
 pub const POSEIDON_TAG_EMPTY: u64 = 6;
 pub const POSEIDON_TAG_POLYGON: u64 = 11;
@@ -27,21 +24,13 @@ pub enum CircuitKind {
     C5,
     Wrapper,
     C1Legacy,
-    C4Legacy,
 }
 
 impl CircuitKind {
     pub fn all(include_placeholders: bool) -> Vec<Self> {
-        let mut circuits = vec![
-            Self::C1,
-            Self::C2,
-            Self::C3,
-            Self::C4,
-            Self::C5,
-            Self::Wrapper,
-        ];
+        let mut circuits = vec![Self::C2, Self::C3, Self::C4, Self::C5];
         if include_placeholders {
-            circuits.extend([Self::C1Legacy, Self::C4Legacy]);
+            circuits.push(Self::C1Legacy);
         }
         circuits
     }
@@ -51,11 +40,10 @@ impl CircuitKind {
             "c1" | "geofence" | "polygon" => Some(Self::C1),
             "c2" | "certificate" | "merkle" => Some(Self::C2),
             "c3" | "threshold" => Some(Self::C3),
-            "c4" | "signature" | "schnorr" => Some(Self::C4),
+            "c4" | "actor" | "authorization" | "auth" => Some(Self::C4),
             "c5" | "nullifier" => Some(Self::C5),
             "wrapper" | "recursive" => Some(Self::Wrapper),
             "c1-legacy" | "bbox" => Some(Self::C1Legacy),
-            "c4-legacy" | "signature-commitment" => Some(Self::C4Legacy),
             _ => None,
         }
     }
@@ -63,25 +51,24 @@ impl CircuitKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::C1 => "c1_polygon_outside",
-            Self::C2 => "c2_poseidon_merkle_depth16",
+            Self::C2 => "c2_poseidon2_merkle_depth16",
             Self::C3 => "c3_threshold_time",
-            Self::C4 => "c4_eddsa_style_proxy",
-            Self::C5 => "c5_poseidon_nullifier_empty_leaf",
-            Self::Wrapper => "wrapper_recursive_plonky2",
+            Self::C4 => "c4_poseidon2_actor_authorization",
+            Self::C5 => "c5_poseidon2_nullifier_empty_leaf",
+            Self::Wrapper => "wrapper_recursive_plonky3",
             Self::C1Legacy => "c1_legacy_bbox",
-            Self::C4Legacy => "c4_legacy_signature_commitment",
         }
     }
 
     pub fn version(self) -> &'static str {
         match self {
             Self::C1 => "v3-strict-outside-forbidden-polygon",
-            Self::C2 => "v3-strict-poseidon-merkle-depth16",
-            Self::C3 => "v2-real-threshold-time",
-            Self::C4 => "v3-blocked-eddsa-gadget-uses-explicit-proxy",
-            Self::C5 => "v3-strict-nullifier-empty-leaf-nonmembership",
-            Self::Wrapper => "v2-real-recursive-verifier",
-            Self::C1Legacy | Self::C4Legacy => "v1-placeholder-compat",
+            Self::C2 => "v4-plonky3-poseidon2-merkle-depth16",
+            Self::C3 => "v4-plonky3-threshold-time",
+            Self::C4 => "v4-plonky3-poseidon2-actor-authorization",
+            Self::C5 => "v4-plonky3-poseidon2-nullifier-empty-leaf",
+            Self::Wrapper => "v5-plonky3-recursion-github-blocked",
+            Self::C1Legacy => "v1-placeholder-compat",
         }
     }
 }
@@ -164,7 +151,7 @@ pub struct BenchmarkOptions {
     pub strict_output: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct MetricRow {
     pub seed: usize,
     pub events_per_lot: usize,
@@ -185,7 +172,7 @@ pub struct MetricRow {
 }
 
 pub fn f(value: u64) -> F {
-    F::from_canonical_u64(value)
+    F::new(value)
 }
 
 pub fn signed_f(value: i64) -> F {

@@ -1,5 +1,9 @@
 use crate::synthetic::synthetic_lot;
-use crate::templates::{prove_inner, witness_for, wrapper_witness, TemplateCache};
+#[cfg(not(feature = "recursion"))]
+use crate::templates::prove_inner;
+#[cfg(feature = "recursion")]
+use crate::templates::prove_recursive_wrapper;
+use crate::templates::{prove_and_verify, TemplateCache};
 use crate::types::{BenchmarkOptions, CircuitKind, MetricRow, Profile};
 use anyhow::{bail, Result};
 use rayon::prelude::*;
@@ -148,26 +152,16 @@ fn run_regular_row(
     setup_ms: f64,
 ) -> MetricRow {
     let template = cache.get(kind);
-    match witness_for(template, lot, seed, profile).and_then(|bundle| {
-        let prove_start = Instant::now();
-        let proof = template.data.prove(bundle.witness)?;
-        let prove_ms = prove_start.elapsed().as_secs_f64() * 1000.0;
-        let compressed = template.data.compress(proof.clone())?;
-        let proof_bytes = compressed.to_bytes().len();
-        let verify_start = Instant::now();
-        template.data.verify(proof)?;
-        let verify_ms = verify_start.elapsed().as_secs_f64() * 1000.0;
-        Ok((bundle.witness_ms, prove_ms, verify_ms, proof_bytes))
-    }) {
-        Ok((witness_ms, prove_ms, verify_ms, proof_bytes)) => ok_row(
+    match prove_and_verify(template, lot, seed, profile) {
+        Ok(stats) => ok_row(
             seed,
             events,
             template,
-            prove_ms,
-            verify_ms,
-            proof_bytes,
+            stats.prove_ms,
+            stats.verify_ms,
+            stats.proof_bytes,
             setup_ms,
-            witness_ms,
+            stats.witness_ms,
             0.0,
         ),
         Err(err) => error_row(
@@ -188,60 +182,65 @@ fn run_wrapper_row(
     setup_ms: f64,
 ) -> MetricRow {
     let wrapper = cache.get(CircuitKind::Wrapper);
-    let inner_kinds = [
-        CircuitKind::C1,
-        CircuitKind::C2,
-        CircuitKind::C3,
-        CircuitKind::C4,
-        CircuitKind::C5,
-    ];
-    let mut inner_proofs = Vec::with_capacity(inner_kinds.len());
-    let mut inner_prove_ms = 0.0;
-    for kind in inner_kinds {
-        match prove_inner(cache.get(kind), lot, seed, profile) {
-            Ok(bundle) => {
-                inner_prove_ms += bundle.prove_ms;
-                inner_proofs.push(bundle.proof);
-            }
-            Err(err) => {
-                return error_row(
-                    seed,
-                    events,
-                    CircuitKind::Wrapper,
-                    format!("inner_proof_failed:{kind:?}:{err:#}"),
-                );
-            }
-        }
+    #[cfg(feature = "recursion")]
+    {
+        return match prove_recursive_wrapper(lot, seed, events, profile) {
+            Ok(stats) => ok_row(
+                seed,
+                events,
+                wrapper,
+                stats.prove_ms,
+                stats.verify_ms,
+                stats.proof_bytes,
+                setup_ms,
+                stats.witness_ms,
+                stats.inner_prove_ms,
+            ),
+            Err(err) => error_row(
+                seed,
+                events,
+                CircuitKind::Wrapper,
+                format!("recursive_prove_or_verify_failed:{err:#}"),
+            ),
+        };
     }
 
-    match wrapper_witness(wrapper, &inner_proofs).and_then(|bundle| {
-        let prove_start = Instant::now();
-        let proof = wrapper.data.prove(bundle.witness)?;
-        let prove_ms = prove_start.elapsed().as_secs_f64() * 1000.0;
-        let compressed = wrapper.data.compress(proof.clone())?;
-        let proof_bytes = compressed.to_bytes().len();
-        let verify_start = Instant::now();
-        wrapper.data.verify(proof)?;
-        let verify_ms = verify_start.elapsed().as_secs_f64() * 1000.0;
-        Ok((bundle.witness_ms, prove_ms, verify_ms, proof_bytes))
-    }) {
-        Ok((witness_ms, prove_ms, verify_ms, proof_bytes)) => ok_row(
-            seed,
-            events,
-            wrapper,
-            prove_ms,
-            verify_ms,
-            proof_bytes,
-            setup_ms,
-            witness_ms,
-            inner_prove_ms,
-        ),
-        Err(err) => error_row(
+    #[cfg(not(feature = "recursion"))]
+    {
+        let _ = setup_ms;
+        let inner_kinds = [
+            CircuitKind::C2,
+            CircuitKind::C3,
+            CircuitKind::C4,
+            CircuitKind::C5,
+        ];
+        let mut inner_proofs = Vec::with_capacity(inner_kinds.len());
+        let mut inner_prove_ms = 0.0;
+        for kind in inner_kinds {
+            match prove_inner(cache.get(kind), lot, seed, profile) {
+                Ok(bundle) => {
+                    inner_prove_ms += bundle.prove_ms;
+                    inner_proofs.push(bundle.proof_bytes);
+                }
+                Err(err) => {
+                    return error_row(
+                        seed,
+                        events,
+                        CircuitKind::Wrapper,
+                        format!("inner_proof_failed:{kind:?}:{err:#}"),
+                    );
+                }
+            }
+        }
+
+        let _ = (wrapper, inner_proofs, inner_prove_ms);
+        error_row(
             seed,
             events,
             CircuitKind::Wrapper,
-            format!("wrapper_prove_or_verify_failed:{err:#}"),
-        ),
+            "recursion_blocked:build without recursion feature; no mocked recursive proof emitted"
+                .to_string(),
+        )
     }
 }
 
@@ -327,5 +326,39 @@ fn peak_rss_mb() -> f64 {
         {
             usage.ru_maxrss as f64 / 1024.0
         }
+    }
+}
+
+#[cfg(all(test, not(feature = "recursion")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wrapper_without_recursion_feature_emits_blocker_row() -> Result<()> {
+        let out = std::env::temp_dir().join(format!(
+            "e1_wrapper_without_recursion_feature_{}.csv",
+            std::process::id()
+        ));
+        run_benchmark(BenchmarkOptions {
+            out: out.clone(),
+            events_per_lot: vec![8],
+            seeds: 1,
+            circuits: vec![CircuitKind::Wrapper],
+            profile: Profile::CoffeeSmall,
+            jobs: 1,
+            include_placeholders: false,
+            strict_output: false,
+        })?;
+
+        let mut rows = csv::Reader::from_path(out)?
+            .deserialize::<MetricRow>()
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(rows.len(), 1);
+        let row = rows.pop().expect("one wrapper row");
+        assert_eq!(row.circuit, CircuitKind::Wrapper.as_str());
+        assert_eq!(row.status, "error");
+        assert_eq!(row.proof_bytes, 0);
+        assert!(row.note.contains("no mocked recursive proof emitted"));
+        Ok(())
     }
 }

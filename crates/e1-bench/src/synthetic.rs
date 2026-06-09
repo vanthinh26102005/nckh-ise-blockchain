@@ -1,7 +1,6 @@
-use crate::types::{f, Profile, F, SCHNORR_G, THRESHOLD};
-use plonky2::hash::hash_types::HashOut;
-use plonky2::hash::hashing::hash_n_to_hash_no_pad;
-use plonky2::hash::poseidon::PoseidonPermutation;
+use crate::types::{f, Profile, F, POSEIDON_TAG_ACTOR, THRESHOLD};
+use p3_field::PrimeCharacteristicRing;
+use p3_symmetric::Permutation;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
@@ -13,18 +12,11 @@ pub struct SyntheticLot {
     pub cert_ids: Vec<u64>,
     pub lot_id: u64,
     pub secret: u64,
+    pub actor_id: u64,
+    pub actor_secret: u64,
+    pub role_tag: u64,
     pub epoch: u64,
     pub polygon: Vec<(u64, u64)>,
-    pub signatures: Vec<ToySignature>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ToySignature {
-    pub msg: u64,
-    pub sk: F,
-    pub pk: F,
-    pub r_point: F,
-    pub s: F,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -50,12 +42,9 @@ pub fn synthetic_lot(seed: u64, events: usize, profile: Profile) -> SyntheticLot
     let lot_id = rng.gen_range(1_000_000..=9_999_999);
     let secret = rng.gen_range(100_000_000..=999_999_999);
     let epoch = 1_800_000_000 + seed;
-    let signatures = cert_ids
-        .iter()
-        .zip(&readings)
-        .enumerate()
-        .map(|(i, (&cert, &reading))| toy_sign(seed, i, cert + reading))
-        .collect();
+    let actor_id = rng.gen_range(10_000..=99_999);
+    let actor_secret = rng.gen_range(100_000_000..=999_999_999);
+    let role_tag = POSEIDON_TAG_ACTOR;
 
     SyntheticLot {
         readings,
@@ -64,9 +53,11 @@ pub fn synthetic_lot(seed: u64, events: usize, profile: Profile) -> SyntheticLot
         cert_ids,
         lot_id,
         secret,
+        actor_id,
+        actor_secret,
+        role_tag,
         epoch,
         polygon,
-        signatures,
     }
 }
 
@@ -113,11 +104,25 @@ pub fn threshold_overflow_lot(seed: u64, events: usize, profile: Profile) -> Syn
     lot
 }
 
-pub fn tampered_signature_lot(seed: u64, events: usize, profile: Profile) -> SyntheticLot {
+pub fn non_monotonic_timestamp_lot(seed: u64, events: usize, profile: Profile) -> SyntheticLot {
     let mut lot = synthetic_lot(seed, events, profile);
-    if let Some(first) = lot.signatures.first_mut() {
-        first.s += f(1);
+    if lot.timestamps.len() > 1 {
+        lot.timestamps[1] = lot.timestamps[0].saturating_sub(1);
     }
+    lot
+}
+
+pub fn equal_timestamp_lot(seed: u64, events: usize, profile: Profile) -> SyntheticLot {
+    let mut lot = synthetic_lot(seed, events, profile);
+    if lot.timestamps.len() > 1 {
+        lot.timestamps[1] = lot.timestamps[0];
+    }
+    lot
+}
+
+pub fn tampered_actor_lot(seed: u64, events: usize, profile: Profile) -> SyntheticLot {
+    let mut lot = synthetic_lot(seed, events, profile);
+    lot.actor_secret += 1;
     lot
 }
 
@@ -136,26 +141,24 @@ pub fn halfplanes_for_polygon(poly: &[(u64, u64)]) -> Vec<HalfPlane> {
     planes
 }
 
-pub fn poseidon_hash(inputs: &[F]) -> HashOut<F> {
-    hash_n_to_hash_no_pad::<F, PoseidonPermutation<F>>(inputs)
+pub fn poseidon2_permute(input: [F; 8]) -> [F; 8] {
+    let external = p3_poseidon2::ExternalLayerConstants::new(
+        p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_INITIAL.to_vec(),
+        p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_FINAL.to_vec(),
+    );
+    let perm = p3_goldilocks::Poseidon2Goldilocks::<8>::new(
+        &external,
+        &p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_INTERNAL,
+    );
+    perm.permute(input)
 }
 
-pub fn toy_challenge(r_point: F, pk: F, msg: F) -> F {
-    poseidon_hash(&[r_point, pk, msg]).elements[0]
-}
-
-fn toy_sign(seed: u64, event_index: usize, msg: u64) -> ToySignature {
-    let sk = f(100_000 + seed * 97 + event_index as u64 * 13);
-    let r = f(700_000 + seed * 31 + event_index as u64 * 17);
-    let pk = sk * f(SCHNORR_G);
-    let r_point = r * f(SCHNORR_G);
-    let challenge = toy_challenge(r_point, pk, f(msg));
-    let s = r + challenge * sk;
-    ToySignature {
-        msg,
-        sk,
-        pk,
-        r_point,
-        s,
+pub fn poseidon2_hash(inputs: &[F]) -> [F; 4] {
+    let mut state = [F::ZERO; 8];
+    for (i, value) in inputs.iter().take(7).enumerate() {
+        state[i] = *value;
     }
+    state[7] = f(inputs.len() as u64);
+    let out = poseidon2_permute(state);
+    [out[0], out[1], out[2], out[3]]
 }

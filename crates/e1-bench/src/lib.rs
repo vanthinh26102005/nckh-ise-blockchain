@@ -1,3 +1,4 @@
+pub mod backend;
 pub mod runner;
 pub mod synthetic;
 pub mod templates;

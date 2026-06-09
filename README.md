@@ -10,7 +10,7 @@ MVP benchmark cho E1 trong hướng nghiên cứu "EPCIS-Aware Recursive ZK-Roll
 make bootstrap
 ```
 
-`make bootstrap` cài `rustup` nếu thiếu và pin toolchain `nightly` qua `rust-toolchain.toml`, vì Plonky2 chính thức hiện vẫn cần nightly.
+`make bootstrap` cài `rustup` nếu thiếu. E1 hiện dùng Plonky3 core cho base proofs. Phase 7 đã pin Plonky3-recursion GitHub rev `524665d`, nhưng wrapper recursive vẫn là research blocker vì upstream rev này panic trong aggregation path; không emit mocked proof.
 
 ### Smoke test
 
@@ -19,7 +19,7 @@ make test
 make e1-quick
 ```
 
-`make e1-quick` chạy strict smoke C1-C5 và wrapper recursive với `events/lot = 8`, `seed = 1` và sinh output đúng guide:
+`make e1-quick` chạy smoke base Plonky3 C2-C5 với `events/lot = 8`, `seed = 1`:
 
 - `results/e1_raw.csv`
 - `results/e1_table1.csv`
@@ -41,12 +41,12 @@ make e1-strict
 
 `make e1-strict` chạy `events/lot = 8,16,32,64`, `30 seed/cell`, profile `coffee-default`, cho các circuit:
 
-- `c1_polygon_outside`: chứng minh điểm fixed-point không nằm trong forbidden polygon đã commit; boundary bị xem là forbidden.
-- `c2_poseidon_merkle_depth16`: chứng minh certificate membership với Poseidon Merkle root depth 16, 65,536 leaves.
+- `c2_poseidon2_merkle_depth16`: chứng minh certificate/event membership MVP với Poseidon2 path depth 16.
 - `c3_threshold_time`: chứng minh KPI readings không vượt ngưỡng và event time monotonic.
-- `c4_eddsa_style_proxy`: blocker/proxy rõ ràng do chưa có gadget Ed25519/EdDSA tương thích pinned Plonky2; không claim EdDSA production.
-- `c5_poseidon_nullifier_empty_leaf`: chứng minh Poseidon(lot_id, secret) và empty-leaf non-membership trong Merkle tree depth 16.
-- `wrapper_recursive_plonky2`: outer Plonky2 proof verify recursive inner proofs C1-C5.
+- `c4_poseidon2_actor_authorization`: chứng minh actor authorization bằng Poseidon2 và private actor secret; không claim EdDSA/Ed25519.
+- `c5_poseidon2_nullifier_empty_leaf`: chứng minh Poseidon2(lot_id, secret, tag) và hashed empty-leaf non-membership MVP.
+
+`wrapper_recursive_plonky3` thử chạy Plonky3-recursion thật khi bật `--features recursion`; nếu upstream panic/fail, row ghi blocker minh bạch và không emit mocked recursive proof.
 
 Raw CSV strict theo guide:
 
@@ -81,9 +81,8 @@ cargo run --release -p e1-bench -- \
 
 Profiles: `coffee-small`, `coffee-default`, `stress`.
 
-`--include-placeholders` adds legacy comparison circuits:
+`--include-placeholders` adds legacy comparison circuits, nhưng circuit này đã bị disable trong backend Plonky3:
 
 - `c1_legacy_bbox`
-- `c4_legacy_signature_commitment`
 
-Các dòng `proxy` hoặc `placeholder` không dùng làm claim paper-final. Đặc biệt, C4 strict hiện vẫn là blocker/proxy vì chưa tích hợp được Ed25519/EdDSA gadget tương thích Plonky2 pinned.
+Không claim `196B`. C4 hiện là Poseidon2 actor authorization proof; Ed25519/EdDSA production verification vẫn là blocker riêng ngoài scope E1 base Plonky3.
