@@ -1,0 +1,17 @@
+[workspace]
+members = ["crates/e1-bench"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/local/nckh-ise-blockchain"
+
+[workspace.dependencies]
+anyhow = "1"
+csv = "1"
+libc = "0.2"
+rand = "0.8"
+rand_chacha = "0.3"
+rayon = "1"
+serde = { version = "1", features = ["derive"] }
