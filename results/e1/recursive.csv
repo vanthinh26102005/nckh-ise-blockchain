@@ -1,0 +1,2 @@
+seed,events_per_lot,circuit,prove_ms,verify_ms,proof_bytes,peak_rss_mb,status,note,circuit_version,build_ms,witness_ms,setup_ms,gate_count,public_inputs,inner_prove_ms
+1,8,wrapper_recursive_plonky3,0.0,0.0,0,9.953125,error,recursive_prove_or_verify_failed:upstream Plonky3-recursion panicked during aggregation C2+C3: trace_next is always present,v5-plonky3-recursion-github-blocked,0.0,0.0,0.0,0,0,0.0
