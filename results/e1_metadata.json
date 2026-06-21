@@ -1,0 +1,66 @@
+{
+  "timestamp_utc": "2026-06-21T02:29:03.703320+00:00",
+  "command": "make e1-strict",
+  "raw_csv": "results/e1_raw.csv",
+  "rows": 480,
+  "circuits": [
+    "c2_poseidon2_merkle_depth16",
+    "c3_threshold_time",
+    "c4_poseidon2_actor_authorization",
+    "c5_poseidon2_nullifier_empty_leaf"
+  ],
+  "events_per_lot": [
+    8,
+    16,
+    32,
+    64
+  ],
+  "seeds_per_cell": {
+    "c2_poseidon2_merkle_depth16:8": 30,
+    "c2_poseidon2_merkle_depth16:16": 30,
+    "c2_poseidon2_merkle_depth16:32": 30,
+    "c2_poseidon2_merkle_depth16:64": 30,
+    "c3_threshold_time:8": 30,
+    "c3_threshold_time:16": 30,
+    "c3_threshold_time:32": 30,
+    "c3_threshold_time:64": 30,
+    "c4_poseidon2_actor_authorization:8": 30,
+    "c4_poseidon2_actor_authorization:16": 30,
+    "c4_poseidon2_actor_authorization:32": 30,
+    "c4_poseidon2_actor_authorization:64": 30,
+    "c5_poseidon2_nullifier_empty_leaf:8": 30,
+    "c5_poseidon2_nullifier_empty_leaf:16": 30,
+    "c5_poseidon2_nullifier_empty_leaf:32": 30,
+    "c5_poseidon2_nullifier_empty_leaf:64": 30
+  },
+  "rustc": "rustc 1.97.0-nightly (e50aa6fba 2026-05-19)",
+  "cargo": "cargo 1.97.0-nightly (4d1f98451 2026-05-15)",
+  "backend": "Plonky3 core",
+  "hash": "Poseidon2",
+  "plonky3_core_crates": {
+    "source": "https://github.com/Plonky3/Plonky3",
+    "rev": "56952503e1401a62982ceaf952c5e4a829b61803",
+    "crates": [
+      "p3-field",
+      "p3-goldilocks",
+      "p3-poseidon2",
+      "p3-uni-stark",
+      "p3-fri",
+      "p3-merkle-tree"
+    ]
+  },
+  "plonky3_recursion_crates": {
+    "source": "https://github.com/Plonky3/Plonky3-recursion",
+    "rev": "524665d0c2e1d294722c064786ae11dff8d9f33b",
+    "status": "research prototype dependency; active development and unaudited"
+  },
+  "python": "3.9.6",
+  "os": "macOS-26.5-arm64-arm-64bit",
+  "machine": "arm64",
+  "processor": "arm",
+  "cpu_logical": 8,
+  "ram_backend": "getrusage_ru_maxrss",
+  "proof_size_policy": "measured Plonky3 STARK proof bytes; 196 bytes is paper target, not claimed",
+  "c4_status": "Poseidon2 actor authorization proof; Ed25519/EdDSA production verification remains a separate blocker",
+  "recursion_status": "GitHub Plonky3-recursion rev 524665d is pinned, but wrapper aggregation currently panics with 'trace_next is always present'; no mocked recursive proof is emitted"
+}

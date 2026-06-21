@@ -1,0 +1,7 @@
+seed,events_per_lot,circuit,prove_ms,verify_ms,proof_bytes,peak_rss_mb,status,note
+0,8,c1_geofence_bbox,27.9345,2.8345000000000002,80965,8.375,ok,"feasibility;placeholder:c1 uses fixed-point bounding-box, not polygon winding-number"
+0,8,c2_certificate_merkle,4.557917,1.482042,54456,8.734375,ok,feasibility;real:c2 proves private certificate membership in an arithmetic Merkle tree
+0,8,c3_threshold,6.247917,1.7095,70956,9.609375,ok,feasibility;real:c3 proves each KPI reading is within threshold
+0,8,c4_signature_commitment,6.959209,1.545333,60080,10.078125,ok,"feasibility;placeholder:c4 checks signature-like commitments, not EdDSA batch verification"
+0,8,c5_nullifier_set,7.1650409999999995,1.451417,51516,10.15625,ok,feasibility;real:c5 proves nullifier derivation and non-membership in a bounded published set
+0,8,wrapper_commitment,26.893375,1.493625,61864,10.15625,ok,"feasibility;placeholder:wrapper aggregates circuit commitments, not recursive proof verification"

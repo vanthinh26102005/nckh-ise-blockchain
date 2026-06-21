@@ -1,0 +1,3 @@
+seed,events_per_lot,circuit,prove_ms,verify_ms,proof_bytes,peak_rss_mb,status,note,circuit_version,build_ms,witness_ms,setup_ms,gate_count,public_inputs,inner_prove_ms
+1,8,c3_threshold_time,67.520584,1.7728329999999999,68168,6.8125,ok,research;real:c3 proves readings stay under threshold and EPCIS event time is monotonic,v2-real-threshold-time,8.236749999999999,0.002791,8.3105,27,5,0.0
+2,8,c3_threshold_time,41.683375000000005,2.131417,70340,6.796875,ok,research;real:c3 proves readings stay under threshold and EPCIS event time is monotonic,v2-real-threshold-time,8.236749999999999,0.0095,8.3105,27,5,0.0

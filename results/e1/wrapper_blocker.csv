@@ -1,0 +1,2 @@
+seed,events_per_lot,circuit,prove_ms,verify_ms,proof_bytes,peak_rss_mb,status,note,circuit_version,build_ms,witness_ms,setup_ms,gate_count,public_inputs,inner_prove_ms
+1,8,wrapper_recursive_plonky3,0.0,0.0,0,4.3125,error,recursion_blocked:p3-recursion 0.1.0 on crates.io is a stub; no mocked recursive proof emitted,v4-plonky3-recursion-blocked,0.0,0.0,0.0,0,0,0.0
