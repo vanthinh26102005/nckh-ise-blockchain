@@ -1,0 +1,2 @@
+profile,l1_mode,lambda_events_per_min,duration_min,seeds,total_events,total_lots,median_ms,p95_ms,p99_ms,min_ms,max_ms,mean_ms
+full,mock,480.0,60.0,30,863755,35498,13448.0,15853.0,16916.0,12021.0,20709.0,13633.230747144735

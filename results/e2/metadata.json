@@ -1,0 +1,26 @@
+{
+  "c4_status": "Poseidon2 actor authorization proof; Ed25519/EdDSA production verification remains a separate blocker",
+  "duration_min": 60.0,
+  "experiment": "E2 - End-to-end latency",
+  "l1_mode": "mock",
+  "lambda_events_per_min": 480.0,
+  "metrics_summary_ms": {
+    "max": 20709.0,
+    "mean": 13633.230747144735,
+    "median": 13448.0,
+    "min": 12021.0,
+    "p95": 15853.0,
+    "p99": 16916.0
+  },
+  "pipeline_disclaimer": "Base proof pipeline latency using E1 Plonky3 base proofs (C2-C5). Full recursive ZK-Rollup aggregation remains blocked upstream.",
+  "profile": "full",
+  "recursion_status": "GitHub Plonky3-recursion rev 524665d is pinned, but wrapper aggregation currently panics with 'trace_next is always present'; no mocked recursive proof is emitted",
+  "seeds": 30,
+  "system": {
+    "arch": "aarch64",
+    "os": "macos"
+  },
+  "timestamp_utc": "2026-08-02T13:05:39.467586+00:00",
+  "total_events": 863755,
+  "total_lots": 35498
+}
