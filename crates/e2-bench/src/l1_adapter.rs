@@ -4,7 +4,7 @@ use anyhow::Result;
 pub trait L1Adapter: Send + Sync {
     fn mode(&self) -> L1Mode;
 
-    /// Simulates or executes L1 tx submission and confirmation.
+    /// Simulates L1 tx submission and confirmation.
     /// Returns `(confirmed_at_ms, note)`.
     fn submit_and_confirm(
         &self,
@@ -14,7 +14,7 @@ pub trait L1Adapter: Send + Sync {
     ) -> Result<(u64, String)>;
 }
 
-/// Mock L1 adapter simulating Ethereum 12s block confirmation.
+/// Simulated L1 adapter. It does not connect to Anvil or Sepolia RPC.
 pub struct MockL1Adapter {
     pub confirmation_delay_ms: u64,
     pub mode: L1Mode,
@@ -23,10 +23,10 @@ pub struct MockL1Adapter {
 impl MockL1Adapter {
     pub fn new(mode: L1Mode) -> Self {
         let confirmation_delay_ms = match mode {
-            L1Mode::Mock => 12_000,   // Standard ~12s Ethereum block time
-            L1Mode::Local => 1_000,   // Fast local dev node (~1s block)
-            L1Mode::Anvil => 1_000,   // Anvil local instant/1s block
-            L1Mode::Sepolia => 15_000,// Sepolia testnet average ~15s
+            L1Mode::Mock => 12_000,
+            L1Mode::Local => 1_000,
+            L1Mode::Anvil => 1_000,
+            L1Mode::Sepolia => 15_000,
         };
         Self {
             confirmation_delay_ms,
@@ -49,7 +49,7 @@ impl L1Adapter for MockL1Adapter {
         let confirmed_at_ms = submit_tx_at_ms + self.confirmation_delay_ms;
         let note = match self.mode {
             L1Mode::Mock => "mock_l1_adapter_12s_delay".to_string(),
-            L1Mode::Local => "local_l1_adapter_1s_delay".to_string(),
+            L1Mode::Local => "local_l1_adapter_simulated_1s_delay".to_string(),
             L1Mode::Anvil => "anvil_l1_adapter_simulated_1s_delay".to_string(),
             L1Mode::Sepolia => "sepolia_l1_adapter_simulated_15s_delay".to_string(),
         };

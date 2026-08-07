@@ -36,7 +36,7 @@ pub fn run_pipeline_seed(
 
     let l1_mode_str = options.l1_mode.to_string();
 
-    // Timeline tracker: ensures serialized prover & tx submit timeline
+    // Timeline tracker: serializes lot proving. The proof step uses E1 prove_ms only.
     let mut current_timeline_ms = 0u64;
 
     for lot in &lots {
@@ -58,7 +58,7 @@ pub fn run_pipeline_seed(
         let synth_lot = synthetic_lot(seed as u64 + lot.lot_id as u64, lot_size, e1_profile);
         let mut total_prove_ms = 0.0f64;
         let mut status = "ok".to_string();
-        let mut note_msg = "base_proof_pipeline_c2_to_c5".to_string();
+        let mut note_msg = "base_proof_pipeline_c2_to_c5;proof_timing=prove_ms_only".to_string();
 
         for &kind in &inner_circuits {
             let tmpl = &template_cache[&(kind, lot_size)];
@@ -143,10 +143,7 @@ mod tests {
             assert!(row.proof_end_ms >= row.proof_start_ms);
             assert!(row.submit_tx_at_ms >= row.proof_end_ms);
             assert!(row.confirmed_at_ms >= row.submit_tx_at_ms);
-            assert_eq!(
-                row.total_latency_ms,
-                row.confirmed_at_ms - row.ingest_at_ms
-            );
+            assert_eq!(row.total_latency_ms, row.confirmed_at_ms - row.ingest_at_ms);
         }
     }
 }

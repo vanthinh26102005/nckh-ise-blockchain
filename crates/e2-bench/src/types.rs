@@ -32,9 +32,9 @@ impl fmt::Display for L1Mode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             L1Mode::Mock => write!(f, "mock"),
-            L1Mode::Local => write!(f, "local"),
-            L1Mode::Anvil => write!(f, "anvil"),
-            L1Mode::Sepolia => write!(f, "sepolia"),
+            L1Mode::Local => write!(f, "local-simulated"),
+            L1Mode::Anvil => write!(f, "anvil-simulated"),
+            L1Mode::Sepolia => write!(f, "sepolia-simulated"),
         }
     }
 }

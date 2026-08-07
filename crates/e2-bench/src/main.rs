@@ -60,7 +60,10 @@ fn main() -> Result<()> {
         ProfileMode::Full => 30,
     });
 
-    let parent_dir = cli.out.parent().unwrap_or_else(|| std::path::Path::new("results"));
+    let parent_dir = cli
+        .out
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("results"));
     let out_summary = cli
         .summary_out
         .unwrap_or_else(|| parent_dir.join("e2_latency_summary.csv"));
@@ -96,7 +99,10 @@ fn main() -> Result<()> {
         all_rows.extend(seed_rows);
     }
 
-    println!("Computing latency statistics across {} events...", all_rows.len());
+    println!(
+        "Computing latency statistics across {} events...",
+        all_rows.len()
+    );
     let summary = compute_summary(&all_rows, &options);
 
     write_raw_csv(&all_rows, &options.out_raw)?;

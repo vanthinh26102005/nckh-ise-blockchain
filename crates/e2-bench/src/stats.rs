@@ -28,14 +28,10 @@ pub fn compute_summary(rows: &[LatencyRow], options: &E2Options) -> LatencySumma
         };
     }
 
-    let mut total_latencies: Vec<f64> = ok_rows
-        .iter()
-        .map(|r| r.total_latency_ms as f64)
-        .collect();
+    let mut total_latencies: Vec<f64> = ok_rows.iter().map(|r| r.total_latency_ms as f64).collect();
     total_latencies.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-    let unique_lots: HashSet<(usize, usize)> =
-        ok_rows.iter().map(|r| (r.seed, r.lot_id)).collect();
+    let unique_lots: HashSet<(usize, usize)> = ok_rows.iter().map(|r| (r.seed, r.lot_id)).collect();
 
     let total_events = ok_rows.len();
     let total_lots = unique_lots.len();
@@ -134,6 +130,8 @@ pub fn write_metadata_json(
             "mean": summary.mean_ms,
         },
         "pipeline_disclaimer": "Base proof pipeline latency using E1 Plonky3 base proofs (C2-C5). Full recursive ZK-Rollup aggregation remains blocked upstream.",
+        "proof_timing_scope": "proof_start_ms/proof_end_ms use measured E1 prove_ms only; witness/setup time is not included in the timed proof window",
+        "l1_status": "All L1 modes are deterministic simulations; no Anvil/Sepolia RPC transaction is submitted by this crate",
         "c4_status": "Poseidon2 actor authorization proof; Ed25519/EdDSA production verification remains a separate blocker",
         "recursion_status": "GitHub Plonky3-recursion rev 524665d is pinned, but wrapper aggregation currently panics with 'trace_next is always present'; no mocked recursive proof is emitted",
         "system": {
@@ -151,7 +149,6 @@ pub fn write_metadata_json(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::L1Mode;
 
     #[test]
     fn test_percentile_calculation() {

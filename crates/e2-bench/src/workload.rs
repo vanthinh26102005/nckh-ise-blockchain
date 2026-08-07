@@ -36,7 +36,7 @@ pub fn generate_poisson_event_stream(
         let u: f64 = rng.gen_range(0.0..1.0);
         // Avoid u = 1.0 (ln(0) = -inf) or u = 0.0 (ln(1) = 0, delta = 0)
         let clamped_u: f64 = u.clamp(1e-10, 1.0 - 1e-10);
-        let delta_ms = (- (1.0f64 - clamped_u).ln() / lambda_per_ms).round() as u64;
+        let delta_ms = (-(1.0f64 - clamped_u).ln() / lambda_per_ms).round() as u64;
         let delta_ms = delta_ms.max(1); // At least 1ms separation
 
         current_time_ms += delta_ms;
@@ -124,7 +124,11 @@ mod tests {
                 // Last lot can be smaller if stream ends
                 assert!(size >= 1 && size <= 64);
             } else {
-                assert!(size >= 8 && size <= 64, "Lot size {} out of bounds [8, 64]", size);
+                assert!(
+                    size >= 8 && size <= 64,
+                    "Lot size {} out of bounds [8, 64]",
+                    size
+                );
             }
         }
     }
