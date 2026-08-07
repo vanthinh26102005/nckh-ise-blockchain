@@ -1,2 +1,6 @@
 /target/
 /.DS_Store
+
+# Ignore large raw benchmark CSV files (>100MB)
+*raw.csv
+results/**/raw.csv

@@ -86,3 +86,64 @@ Profiles: `coffee-small`, `coffee-default`, `stress`.
 - `c1_legacy_bbox`
 
 Không claim `196B`. C4 hiện là Poseidon2 actor authorization proof; Ed25519/EdDSA production verification vẫn là blocker riêng ngoài scope E1 base Plonky3.
+
+## E2 End-to-End Latency Benchmark
+
+Đo thời gian từ lúc EPCIS event được ingest đến khi epoch/proof artifact được submit và confirm ở lớp blockchain (RQ2).
+
+### Smoke Run (Quick Profile)
+
+```bash
+make e2-quick
+```
+
+Chạy quick profile: `lambda = 480 events/min`, `duration = 5 min`, `seeds = 3`, `l1-mode = mock`.
+
+Sinh các file output trong `results/e2/`:
+- `results/e2/raw.csv`
+- `results/e2/summary.csv`
+- `results/e2/metadata.json`
+- `results/e2/report.md`
+- `results/e2/cdf.png`
+
+### Full Run (Stage 3 Guide Aligned)
+
+```bash
+make e2
+```
+
+Chạy full workload: `lambda = 480 events/min`, `duration = 60 min`, `seeds = 30`, `l1-mode = mock`.
+
+### CLI Direct Usage
+
+```bash
+cargo run --release -p e2-bench -- \
+  --profile quick \
+  --lambda-events-per-min 480 \
+  --duration-min 5 \
+  --seeds 3 \
+  --l1-mode mock \
+  --out results/e2/raw.csv \
+  --summary-out results/e2/summary.csv \
+  --metadata-out results/e2/metadata.json
+```
+
+Full run CLI:
+
+```bash
+cargo run --release -p e2-bench -- \
+  --profile full \
+  --lambda-events-per-min 480 \
+  --duration-min 60 \
+  --seeds 30 \
+  --l1-mode anvil \
+  --out results/e2/raw.csv \
+  --summary-out results/e2/summary.csv \
+  --metadata-out results/e2/metadata.json
+```
+
+### Disclaimers & Disclosures
+
+- E2 tái sử dụng E1 Plonky3 base proofs (C2–C5), và proof window hiện tính `witness_ms + prove_ms` được cache theo circuit và lot size; reusable template/setup time không nằm trong `proof_start_ms` → `proof_end_ms`.
+- Report ghi rõ đây là **base proof pipeline latency**, không claim full recursive rollup latency nếu Plonky3 recursive wrapper vẫn đang blocked.
+- L1 confirmation hiện là deterministic simulation: `mock` ~12s, `local/anvil` ~1s, `sepolia` ~15s. Chưa submit transaction thật lên Anvil/Sepolia.
