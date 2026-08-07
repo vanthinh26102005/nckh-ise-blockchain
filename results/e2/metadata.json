@@ -6,23 +6,23 @@
   "l1_status": "All L1 modes are deterministic simulations; no Anvil/Sepolia RPC transaction is submitted by this crate",
   "lambda_events_per_min": 480.0,
   "metrics_summary_ms": {
-    "max": 20709.0,
-    "mean": 13633.230747144735,
-    "median": 13448.0,
-    "min": 12021.0,
-    "p95": 15853.0,
-    "p99": 16916.0
+    "max": 20992.0,
+    "mean": 13925.44826715909,
+    "median": 13740.0,
+    "min": 12297.0,
+    "p95": 16145.0,
+    "p99": 17210.0
   },
   "pipeline_disclaimer": "Base proof pipeline latency using E1 Plonky3 base proofs (C2-C5). Full recursive ZK-Rollup aggregation remains blocked upstream.",
-  "proof_timing_scope": "proof_start_ms/proof_end_ms use measured E1 prove_ms only; witness/setup time is not included in the timed proof window",
   "profile": "full",
+  "proof_timing_scope": "proof_start_ms/proof_end_ms use measured E1 witness_ms + prove_ms cached by circuit and lot size; reusable template/setup time is not included in the timed proof window",
   "recursion_status": "GitHub Plonky3-recursion rev 524665d is pinned, but wrapper aggregation currently panics with 'trace_next is always present'; no mocked recursive proof is emitted",
   "seeds": 30,
   "system": {
     "arch": "aarch64",
     "os": "macos"
   },
-  "timestamp_utc": "2026-08-02T13:05:39.467586+00:00",
+  "timestamp_utc": "2026-08-07T05:01:00.619704+00:00",
   "total_events": 863755,
   "total_lots": 35498
 }

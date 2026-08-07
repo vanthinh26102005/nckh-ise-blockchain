@@ -130,7 +130,7 @@ pub fn write_metadata_json(
             "mean": summary.mean_ms,
         },
         "pipeline_disclaimer": "Base proof pipeline latency using E1 Plonky3 base proofs (C2-C5). Full recursive ZK-Rollup aggregation remains blocked upstream.",
-        "proof_timing_scope": "proof_start_ms/proof_end_ms use measured E1 prove_ms only; witness/setup time is not included in the timed proof window",
+        "proof_timing_scope": "proof_start_ms/proof_end_ms use measured E1 witness_ms + prove_ms cached by circuit and lot size; reusable template/setup time is not included in the timed proof window",
         "l1_status": "All L1 modes are deterministic simulations; no Anvil/Sepolia RPC transaction is submitted by this crate",
         "c4_status": "Poseidon2 actor authorization proof; Ed25519/EdDSA production verification remains a separate blocker",
         "recursion_status": "GitHub Plonky3-recursion rev 524665d is pinned, but wrapper aggregation currently panics with 'trace_next is always present'; no mocked recursive proof is emitted",

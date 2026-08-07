@@ -26,6 +26,7 @@ pub fn run_pipeline_seed(
 
     let mut rows = Vec::new();
     let mut template_cache = HashMap::new();
+    let mut proof_timing_cache = HashMap::new();
 
     let inner_circuits = [
         CircuitKind::C2,
@@ -36,7 +37,7 @@ pub fn run_pipeline_seed(
 
     let l1_mode_str = options.l1_mode.to_string();
 
-    // Timeline tracker: serializes lot proving. The proof step uses E1 prove_ms only.
+    // Timeline tracker: serializes lot proving. Timings are measured once per circuit/lot size.
     let mut current_timeline_ms = 0u64;
 
     for lot in &lots {
@@ -56,15 +57,25 @@ pub fn run_pipeline_seed(
 
         // Generate synthetic E1 lot & execute proofs C2..C5
         let synth_lot = synthetic_lot(seed as u64 + lot.lot_id as u64, lot_size, e1_profile);
-        let mut total_prove_ms = 0.0f64;
+        let mut total_proof_ms = 0.0f64;
         let mut status = "ok".to_string();
-        let mut note_msg = "base_proof_pipeline_c2_to_c5;proof_timing=prove_ms_only".to_string();
+        let mut note_msg =
+            "base_proof_pipeline_c2_to_c5;proof_timing=witness_ms_plus_prove_ms_cached_by_lot_size"
+                .to_string();
 
         for &kind in &inner_circuits {
-            let tmpl = &template_cache[&(kind, lot_size)];
+            let cache_key = (kind, lot_size);
+            if let Some(ms) = proof_timing_cache.get(&cache_key) {
+                total_proof_ms += ms;
+                continue;
+            }
+
+            let tmpl = &template_cache[&cache_key];
             match prove_and_verify(tmpl, &synth_lot, seed, e1_profile) {
                 Ok(stats) => {
-                    total_prove_ms += stats.prove_ms;
+                    let proof_ms = stats.witness_ms + stats.prove_ms;
+                    proof_timing_cache.insert(cache_key, proof_ms);
+                    total_proof_ms += proof_ms;
                 }
                 Err(err) => {
                     status = "error".to_string();
@@ -74,7 +85,7 @@ pub fn run_pipeline_seed(
             }
         }
 
-        let proof_duration_ms = total_prove_ms.ceil() as u64;
+        let proof_duration_ms = total_proof_ms.ceil() as u64;
         let proof_end_ms = proof_start_ms + proof_duration_ms.max(1);
 
         // 2. Submit transaction to L1

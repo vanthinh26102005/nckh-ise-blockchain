@@ -144,6 +144,6 @@ cargo run --release -p e2-bench -- \
 
 ### Disclaimers & Disclosures
 
-- E2 tái sử dụng E1 Plonky3 base proofs (C2–C5), và proof window hiện tính `prove_ms` của E1 proofs; witness/setup time không nằm trong `proof_start_ms` → `proof_end_ms`.
+- E2 tái sử dụng E1 Plonky3 base proofs (C2–C5), và proof window hiện tính `witness_ms + prove_ms` được cache theo circuit và lot size; reusable template/setup time không nằm trong `proof_start_ms` → `proof_end_ms`.
 - Report ghi rõ đây là **base proof pipeline latency**, không claim full recursive rollup latency nếu Plonky3 recursive wrapper vẫn đang blocked.
 - L1 confirmation hiện là deterministic simulation: `mock` ~12s, `local/anvil` ~1s, `sepolia` ~15s. Chưa submit transaction thật lên Anvil/Sepolia.
