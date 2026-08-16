@@ -17,6 +17,7 @@ pub const POSEIDON_TAG_EMPTY: u64 = 6;
 pub const POSEIDON_TAG_POLYGON: u64 = 11;
 pub const POSEIDON_TAG_EVENT: u64 = 12;
 pub const POSEIDON_TAG_EVENT_BATCH: u64 = 13;
+pub const POSEIDON_TAG_NULLIFIER_INDEX: u64 = 14;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum CircuitKind {
@@ -57,7 +58,7 @@ impl CircuitKind {
             Self::C2 => "c2_poseidon2_merkle_depth16",
             Self::C3 => "c3_threshold_time",
             Self::C4 => "c4_poseidon2_actor_authorization",
-            Self::C5 => "c5_poseidon2_nullifier_empty_leaf",
+            Self::C5 => "c5_poseidon2_sparse_nullifier_depth32",
             Self::Wrapper => "wrapper_recursive_plonky3",
             Self::C1Legacy => "c1_legacy_bbox",
         }
@@ -69,7 +70,7 @@ impl CircuitKind {
             Self::C2 => "v4-plonky3-poseidon2-merkle-depth16",
             Self::C3 => "v4-plonky3-threshold-time",
             Self::C4 => "v4-plonky3-poseidon2-actor-authorization",
-            Self::C5 => "v4-plonky3-poseidon2-nullifier-empty-leaf",
+            Self::C5 => "v5-plonky3-poseidon2-sparse-nullifier-depth32",
             Self::Wrapper => "v5-plonky3-recursion-github-blocked",
             Self::C1Legacy => "v1-placeholder-compat",
         }

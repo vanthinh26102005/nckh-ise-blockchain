@@ -3,8 +3,8 @@ use crate::epcis::{EpcisEventV1, PointE6, SimplePolygon, MAX_POLYGON_VERTICES};
 use crate::synthetic::{poseidon2_permute, tampered_actor_lot, SyntheticLot};
 use crate::types::{
     f, signed_f, CircuitKind, Profile, F, POSEIDON_TAG_CERT, POSEIDON_TAG_EMPTY,
-    POSEIDON_TAG_EVENT_BATCH, POSEIDON_TAG_NULLIFIER, POSEIDON_TAG_POLYGON, RANGE_BITS,
-    STRICT_MERKLE_DEPTH, STRICT_MERKLE_LEAVES, THRESHOLD,
+    POSEIDON_TAG_EVENT_BATCH, POSEIDON_TAG_NULLIFIER, POSEIDON_TAG_NULLIFIER_INDEX,
+    POSEIDON_TAG_POLYGON, RANGE_BITS, STRICT_MERKLE_DEPTH, STRICT_MERKLE_LEAVES, THRESHOLD,
 };
 use anyhow::{anyhow, bail, Result};
 use core::borrow::Borrow;
@@ -21,7 +21,7 @@ use p3_commit::ExtensionMmcs;
 use p3_commit::Pcs as PcsTrait;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
-use p3_field::{Dup, Field, PrimeCharacteristicRing};
+use p3_field::{Dup, Field, PrimeCharacteristicRing, PrimeField64};
 use p3_fri::{FriParameters, TwoAdicFriPcs};
 use p3_goldilocks::{
     GenericPoseidon2LinearLayersGoldilocks, Poseidon2Goldilocks,
@@ -76,9 +76,12 @@ const POSEIDON_COLS: usize = p3_poseidon2_air::num_cols::<
 const C2_VECTOR_LANES: usize = 32;
 const C2_INDEX_BITS_START: usize = POSEIDON_COLS * C2_VECTOR_LANES;
 const C2_WIDTH: usize = C2_INDEX_BITS_START + STRICT_MERKLE_DEPTH;
-const C5_VECTOR_LANES: usize = 32;
+const C5_SPARSE_DEPTH: usize = 32;
+const C5_VECTOR_LANES: usize = 128;
 const C5_INDEX_BITS_START: usize = POSEIDON_COLS * C5_VECTOR_LANES;
-const C5_WIDTH: usize = C5_INDEX_BITS_START + STRICT_MERKLE_DEPTH;
+const C5_QUOTIENT_BITS_START: usize = C5_INDEX_BITS_START + C5_SPARSE_DEPTH;
+const C5_SIBLINGS_START: usize = C5_QUOTIENT_BITS_START + C5_SPARSE_DEPTH;
+const C5_WIDTH: usize = C5_SIBLINGS_START + C5_SPARSE_DEPTH;
 const C3_READING_COL: usize = 0;
 const C3_TIMESTAMP_COL: usize = 1;
 const C3_THRESHOLD_DIFF_COL: usize = 2;
@@ -250,8 +253,8 @@ pub fn build_template(
             "research;real:c4 proves ZK-native Poseidon2 actor authorization; Ed25519/EdDSA remains a separate blocker",
         ),
         CircuitKind::C5 => (
-            2,
-            "research;mvp:c5 proves Poseidon2 nullifier derivation plus hashed empty-leaf MVP non-membership; not a production accumulator",
+            4,
+            "research;real:c5 proves a 32-bit sparse Poseidon2 nullifier-map update from public old root to public new root; host persistence is deferred to E2/Fabric",
         ),
         CircuitKind::Wrapper => (
             0,
@@ -645,7 +648,7 @@ pub fn prove_recursive_wrapper(
         public_input_indices: [Some(0), None, Some(2), None],
         num_pis: 3,
     };
-    let c5_air = C5NullifierEmptyAir;
+    let c5_air = C5NullifierUpdateAir;
 
     let c2 = prove_recursion_stark(&cfg, &c2_air, c2_trace, &c2_pis)?;
     let c3 = prove_recursion_stark(&cfg, &c3_air, c3_trace, &c3_pis)?;
@@ -1586,9 +1589,9 @@ impl<AB: AirBuilder<F = F>> Air<AB> for C2MerkleAir {
     }
 }
 
-pub struct C5NullifierEmptyAir;
+pub struct C5NullifierUpdateAir;
 
-impl BaseAir<F> for C5NullifierEmptyAir {
+impl BaseAir<F> for C5NullifierUpdateAir {
     fn width(&self) -> usize {
         C5_WIDTH
     }
@@ -1598,7 +1601,7 @@ impl BaseAir<F> for C5NullifierEmptyAir {
     }
 
     fn num_public_values(&self) -> usize {
-        2
+        4
     }
 
     fn max_constraint_degree(&self) -> Option<usize> {
@@ -1606,59 +1609,101 @@ impl BaseAir<F> for C5NullifierEmptyAir {
     }
 }
 
-impl<AB: AirBuilder<F = F>> Air<AB> for C5NullifierEmptyAir {
+impl<AB: AirBuilder<F = F>> Air<AB> for C5NullifierUpdateAir {
     fn eval(&self, builder: &mut AB) {
-        let nullifier_pub = builder.public_values()[0];
-        let root_pub = builder.public_values()[1];
+        let old_root: AB::Expr = builder.public_values()[0].into();
+        let new_root: AB::Expr = builder.public_values()[1].into();
+        let nullifier_pub: AB::Expr = builder.public_values()[2].into();
+        let state: AB::Expr = builder.public_values()[3].into();
         let main = builder.main();
         let local = main.current_slice();
 
         for lane in 0..C5_VECTOR_LANES {
-            let cols = poseidon_lane::<AB>(local, lane);
-            eval_poseidon2_cols(builder, cols);
+            eval_poseidon2_cols(builder, poseidon_lane::<AB>(local, lane));
         }
+
+        builder.assert_eq(state.clone(), F::ONE);
 
         let nullifier = poseidon_lane::<AB>(local, 0);
         builder.assert_eq(nullifier.inputs[2], f(POSEIDON_TAG_NULLIFIER));
-        builder.assert_zero(nullifier.inputs[3]);
-        builder.assert_zero(nullifier.inputs[4]);
-        builder.assert_zero(nullifier.inputs[5]);
-        builder.assert_zero(nullifier.inputs[6]);
+        for input in &nullifier.inputs[3..7] {
+            builder.assert_zero(*input);
+        }
         builder.assert_eq(nullifier.inputs[7], f(3));
+        let nullifier_output: AB::Expr =
+            nullifier.ending_full_rounds[HALF_FULL_ROUNDS - 1].post[0].into();
+        builder.assert_eq(nullifier_output, nullifier_pub.clone());
+
+        let index_hash = poseidon_lane::<AB>(local, 1);
+        builder.assert_eq(index_hash.inputs[0], nullifier_pub);
+        builder.assert_eq(index_hash.inputs[1], f(POSEIDON_TAG_NULLIFIER_INDEX));
+        for input in &index_hash.inputs[2..7] {
+            builder.assert_zero(*input);
+        }
+        builder.assert_eq(index_hash.inputs[7], f(2));
+        let index_hash_output: AB::Expr =
+            index_hash.ending_full_rounds[HALF_FULL_ROUNDS - 1].post[0].into();
+
+        let mut index = AB::Expr::ZERO;
+        let mut quotient = AB::Expr::ZERO;
+        for bit in 0..C5_SPARSE_DEPTH {
+            let index_bit = local[C5_INDEX_BITS_START + bit];
+            let quotient_bit = local[C5_QUOTIENT_BITS_START + bit];
+            builder.assert_zero(index_bit * (index_bit - F::ONE));
+            builder.assert_zero(quotient_bit * (quotient_bit - F::ONE));
+            index += index_bit * f(1u64 << bit);
+            quotient += quotient_bit * f(1u64 << bit);
+        }
         builder.assert_eq(
-            nullifier.ending_full_rounds[HALF_FULL_ROUNDS - 1].post[0],
-            nullifier_pub,
+            index_hash_output,
+            index + quotient * f(1u64 << C5_SPARSE_DEPTH),
         );
 
-        let empty_leaf = poseidon_lane::<AB>(local, 1);
-        builder.assert_eq(empty_leaf.inputs[0], nullifier.inputs[0]);
-        builder.assert_eq(empty_leaf.inputs[2], f(POSEIDON_TAG_EMPTY));
-        builder.assert_zero(empty_leaf.inputs[3]);
-        builder.assert_zero(empty_leaf.inputs[4]);
-        builder.assert_zero(empty_leaf.inputs[5]);
-        builder.assert_zero(empty_leaf.inputs[6]);
-        builder.assert_eq(empty_leaf.inputs[7], f(3));
-
-        let mut recomposed_index = AB::Expr::ZERO;
-        let mut previous_output = empty_leaf.ending_full_rounds[HALF_FULL_ROUNDS - 1].post[0];
-        for level in 0..STRICT_MERKLE_DEPTH {
-            let bit = local[C5_INDEX_BITS_START + level];
-            let path = poseidon_lane::<AB>(local, level + 2);
-            builder.assert_zero(bit * (bit - F::ONE));
-            recomposed_index += bit * f(1u64 << level);
-            builder.assert_eq(path.inputs[2], f(POSEIDON_TAG_EMPTY));
-            builder.assert_zero(path.inputs[3]);
-            builder.assert_zero(path.inputs[4]);
-            builder.assert_zero(path.inputs[5]);
-            builder.assert_zero(path.inputs[6]);
-            builder.assert_eq(path.inputs[7], f(3));
-            builder.assert_zero((bit - F::ONE) * (path.inputs[0] - previous_output));
-            builder.assert_zero(bit * (path.inputs[1] - previous_output));
-            previous_output = path.ending_full_rounds[HALF_FULL_ROUNDS - 1].post[0];
+        let old_leaf = poseidon_lane::<AB>(local, 2);
+        builder.assert_zero(old_leaf.inputs[0]);
+        builder.assert_eq(old_leaf.inputs[1], f(POSEIDON_TAG_EMPTY));
+        for input in &old_leaf.inputs[2..7] {
+            builder.assert_zero(*input);
         }
+        builder.assert_eq(old_leaf.inputs[7], f(2));
 
-        builder.assert_zero(empty_leaf.inputs[1] - recomposed_index);
-        builder.assert_eq(previous_output, root_pub);
+        let new_leaf = poseidon_lane::<AB>(local, 3);
+        builder.assert_eq(new_leaf.inputs[0], state);
+        builder.assert_eq(new_leaf.inputs[1], f(POSEIDON_TAG_EMPTY));
+        for input in &new_leaf.inputs[2..7] {
+            builder.assert_zero(*input);
+        }
+        builder.assert_eq(new_leaf.inputs[7], f(2));
+
+        let mut previous_old: AB::Expr =
+            old_leaf.ending_full_rounds[HALF_FULL_ROUNDS - 1].post[0].into();
+        let mut previous_new: AB::Expr =
+            new_leaf.ending_full_rounds[HALF_FULL_ROUNDS - 1].post[0].into();
+        for level in 0..C5_SPARSE_DEPTH {
+            let bit = local[C5_INDEX_BITS_START + level];
+            let sibling = local[C5_SIBLINGS_START + level];
+            let old_path = poseidon_lane::<AB>(local, 4 + level * 2);
+            let new_path = poseidon_lane::<AB>(local, 5 + level * 2);
+            for path in [old_path, new_path] {
+                builder.assert_eq(path.inputs[2], f(POSEIDON_TAG_EMPTY));
+                for input in &path.inputs[3..7] {
+                    builder.assert_zero(*input);
+                }
+                builder.assert_eq(path.inputs[7], f(3));
+            }
+            let old_left = previous_old.clone() + bit * (sibling - previous_old.clone());
+            let old_right = sibling + bit * (previous_old.clone() - sibling);
+            let new_left = previous_new.clone() + bit * (sibling - previous_new.clone());
+            let new_right = sibling + bit * (previous_new.clone() - sibling);
+            builder.assert_eq(old_path.inputs[0], old_left);
+            builder.assert_eq(old_path.inputs[1], old_right);
+            builder.assert_eq(new_path.inputs[0], new_left);
+            builder.assert_eq(new_path.inputs[1], new_right);
+            previous_old = old_path.ending_full_rounds[HALF_FULL_ROUNDS - 1].post[0].into();
+            previous_new = new_path.ending_full_rounds[HALF_FULL_ROUNDS - 1].post[0].into();
+        }
+        builder.assert_eq(previous_old, old_root);
+        builder.assert_eq(previous_new, new_root);
     }
 }
 
@@ -2001,7 +2046,7 @@ fn prove_c5(lot: &SyntheticLot) -> Result<ProofStats> {
     let witness_start = Instant::now();
     let (trace, pis) = c5_trace_and_pis(lot, None)?;
     let witness_ms = witness_start.elapsed().as_secs_f64() * 1000.0;
-    let (prove_ms, verify_ms, proof_bytes) = prove_stark(&C5NullifierEmptyAir, trace, &pis)?;
+    let (prove_ms, verify_ms, proof_bytes) = prove_stark(&C5NullifierUpdateAir, trace, &pis)?;
     Ok(ProofStats {
         witness_ms,
         prove_ms,
@@ -2014,89 +2059,255 @@ fn c5_trace_and_pis(
     lot: &SyntheticLot,
     tamper: Option<C5Tamper>,
 ) -> Result<(RowMajorMatrix<F>, Vec<F>)> {
-    let witness = c5_witness(lot, tamper)?;
+    c5_trace_and_pis_from_witness(c5_witness(lot, tamper)?)
+}
+
+#[cfg(test)]
+fn c5_trace_and_pis_after_prior_nullifier(
+    lot: &SyntheticLot,
+    prior_lot: &SyntheticLot,
+) -> Result<(RowMajorMatrix<F>, Vec<F>)> {
+    c5_trace_and_pis_from_witness(c5_witness_after_prior_nullifier(lot, prior_lot)?)
+}
+
+#[cfg(test)]
+fn c5_trace_and_pis_replay(lot: &SyntheticLot) -> Result<(RowMajorMatrix<F>, Vec<F>)> {
+    let nullifier = poseidon2_permute(c5_nullifier_input(lot.lot_id, lot.secret))[0];
+    let index_hash_u64 = poseidon2_permute(c5_index_input(nullifier))[0].as_canonical_u64();
+    let index = index_hash_u64 as u32;
+    let defaults = c5_default_nodes();
+    let mut old_root = poseidon2_permute(c5_leaf_input(F::ONE))[0];
+    for level in 0..C5_SPARSE_DEPTH {
+        old_root = poseidon2_permute(c5_parent_input(
+            old_root,
+            defaults[level],
+            (index >> level) & 1,
+        ))[0];
+    }
+    c5_trace_and_pis_from_witness(c5_witness_from_path(
+        lot,
+        index_hash_u64,
+        old_root,
+        defaults[..C5_SPARSE_DEPTH].to_vec(),
+        F::ONE,
+    )?)
+}
+
+fn c5_trace_and_pis_from_witness(witness: C5Witness) -> Result<(RowMajorMatrix<F>, Vec<F>)> {
     Ok((
-        c5_trace(witness.inputs, &witness.index_bits),
-        vec![witness.nullifier, witness.root],
+        c5_trace(
+            witness.inputs,
+            &witness.index_bits,
+            &witness.quotient_bits,
+            &witness.siblings,
+        ),
+        vec![
+            witness.old_root,
+            witness.new_root,
+            witness.nullifier,
+            witness.state,
+        ],
     ))
 }
 
 struct C5Witness {
     inputs: Vec<[F; POSEIDON_WIDTH]>,
     index_bits: Vec<F>,
+    quotient_bits: Vec<F>,
+    siblings: Vec<F>,
+    old_root: F,
+    new_root: F,
     nullifier: F,
-    root: F,
+    state: F,
 }
 
 fn c5_witness(lot: &SyntheticLot, tamper: Option<C5Tamper>) -> Result<C5Witness> {
-    let empty_index = (lot.lot_id as usize) & (STRICT_MERKLE_LEAVES - 1);
-    let public_nullifier_input = c5_nullifier_input(lot.lot_id, lot.secret);
-    let nullifier = poseidon2_permute(public_nullifier_input)[0];
     let nullifier_input = match tamper {
         Some(C5Tamper::WrongSecret) => c5_nullifier_input(lot.lot_id, lot.secret + 1),
-        _ => public_nullifier_input,
+        _ => c5_nullifier_input(lot.lot_id, lot.secret),
     };
-
-    let empty_leaf_input = match tamper {
-        Some(C5Tamper::Duplicate) => c5_non_empty_leaf_input(lot, empty_index),
-        _ => c5_empty_leaf_input(lot.lot_id, empty_index),
+    let nullifier = poseidon2_permute(c5_nullifier_input(lot.lot_id, lot.secret))[0];
+    let index_hash = poseidon2_permute(c5_index_input(nullifier))[0];
+    let index_hash_u64 = index_hash.as_canonical_u64();
+    let index = index_hash_u64 as u32;
+    let quotient = (index_hash_u64 >> C5_SPARSE_DEPTH) as u32;
+    let mut index_bits = c5_bits(index as u64);
+    let quotient_bits = c5_bits(quotient as u64);
+    let defaults = c5_default_nodes();
+    let old_root = defaults[C5_SPARSE_DEPTH];
+    let mut state = F::ONE;
+    let old_leaf_input = match tamper {
+        Some(C5Tamper::Duplicate) => c5_leaf_input(F::ONE),
+        _ => c5_leaf_input(F::ZERO),
     };
-    let empty_leaf = poseidon2_permute(c5_empty_leaf_input(lot.lot_id, empty_index))[0];
-    let mut leaves = (0..STRICT_MERKLE_LEAVES)
-        .map(|i| c5_leaf_hash(lot, i, empty_index))
-        .collect::<Vec<_>>();
+    let new_leaf_input = c5_leaf_input(F::ONE);
+    let mut old_current = poseidon2_permute(old_leaf_input)[0];
+    let mut new_current = poseidon2_permute(new_leaf_input)[0];
+    let mut inputs = Vec::with_capacity(4 + C5_SPARSE_DEPTH * 2);
+    let mut siblings = Vec::with_capacity(C5_SPARSE_DEPTH);
+    inputs.extend([
+        nullifier_input,
+        c5_index_input(nullifier),
+        old_leaf_input,
+        new_leaf_input,
+    ]);
 
-    let mut current = empty_leaf;
-    let mut inputs = Vec::with_capacity(STRICT_MERKLE_DEPTH + 2);
-    let mut index_bits = Vec::with_capacity(STRICT_MERKLE_DEPTH);
-    inputs.push(nullifier_input);
-    inputs.push(empty_leaf_input);
-
-    let mut idx = empty_index;
-    while leaves.len() > 1 {
-        let bit = idx & 1;
-        let sibling_idx = if bit == 0 { idx + 1 } else { idx - 1 };
-        let sibling = leaves[sibling_idx];
-        let parent_input = if bit == 0 {
-            merkle_parent_input(current, sibling, f(POSEIDON_TAG_EMPTY))
-        } else {
-            merkle_parent_input(sibling, current, f(POSEIDON_TAG_EMPTY))
-        };
-        current = poseidon2_permute(parent_input)[0];
-        inputs.push(parent_input);
-        index_bits.push(f(bit as u64));
-        leaves = leaves
-            .chunks(2)
-            .map(|pair| {
-                poseidon2_permute(merkle_parent_input(pair[0], pair[1], f(POSEIDON_TAG_EMPTY)))[0]
-            })
-            .collect();
-        idx /= 2;
+    for level in 0..C5_SPARSE_DEPTH {
+        let bit = (index >> level) & 1;
+        let sibling = defaults[level];
+        let old_parent = c5_parent_input(old_current, sibling, bit);
+        let new_parent = c5_parent_input(new_current, sibling, bit);
+        old_current = poseidon2_permute(old_parent)[0];
+        new_current = poseidon2_permute(new_parent)[0];
+        inputs.extend([old_parent, new_parent]);
+        siblings.push(sibling);
     }
 
-    let mut root = current;
+    let mut new_root = new_current;
     match tamper {
-        Some(C5Tamper::WrongRoot) => root += F::ONE,
-        Some(C5Tamper::WrongPath) => inputs[2][1] += F::ONE,
-        Some(C5Tamper::WrongSecret) | Some(C5Tamper::Duplicate) => {}
-        None => {}
+        Some(C5Tamper::WrongOldRoot) => {
+            return Ok(C5Witness {
+                inputs,
+                index_bits,
+                quotient_bits,
+                siblings,
+                old_root: old_root + F::ONE,
+                new_root,
+                nullifier,
+                state,
+            });
+        }
+        Some(C5Tamper::WrongNewRoot) => new_root += F::ONE,
+        Some(C5Tamper::WrongPath) => inputs[4][1] += F::ONE,
+        Some(C5Tamper::WrongIndex) => index_bits[0] = F::ONE - index_bits[0],
+        Some(C5Tamper::WrongState) => state = F::ZERO,
+        Some(C5Tamper::Duplicate) | Some(C5Tamper::WrongSecret) | None => {}
     }
     Ok(C5Witness {
         inputs,
         index_bits,
+        quotient_bits,
+        siblings,
+        old_root,
+        new_root,
         nullifier,
-        root,
+        state,
     })
 }
 
-fn c5_trace(inputs: Vec<[F; POSEIDON_WIDTH]>, index_bits: &[F]) -> RowMajorMatrix<F> {
-    debug_assert_eq!(inputs.len(), STRICT_MERKLE_DEPTH + 2);
-    debug_assert_eq!(index_bits.len(), STRICT_MERKLE_DEPTH);
+#[cfg(test)]
+fn c5_witness_after_prior_nullifier(
+    lot: &SyntheticLot,
+    prior_lot: &SyntheticLot,
+) -> Result<C5Witness> {
+    let nullifier = poseidon2_permute(c5_nullifier_input(lot.lot_id, lot.secret))[0];
+    let index_hash = poseidon2_permute(c5_index_input(nullifier))[0];
+    let index_hash_u64 = index_hash.as_canonical_u64();
+    let index = index_hash_u64 as u32;
+    let prior_nullifier =
+        poseidon2_permute(c5_nullifier_input(prior_lot.lot_id, prior_lot.secret))[0];
+    let prior_index =
+        poseidon2_permute(c5_index_input(prior_nullifier))[0].as_canonical_u64() as u32;
+    if index == prior_index {
+        bail!("prior nullifier collides with the fresh nullifier's 32-bit index");
+    }
+
+    let defaults = c5_default_nodes();
+    let mut prior_nodes = Vec::with_capacity(C5_SPARSE_DEPTH + 1);
+    let mut prior_current = poseidon2_permute(c5_leaf_input(F::ONE))[0];
+    prior_nodes.push(prior_current);
+    for level in 0..C5_SPARSE_DEPTH {
+        let bit = (prior_index >> level) & 1;
+        prior_current = poseidon2_permute(c5_parent_input(prior_current, defaults[level], bit))[0];
+        prior_nodes.push(prior_current);
+    }
+
+    let mut siblings = Vec::with_capacity(C5_SPARSE_DEPTH);
+    for level in 0..C5_SPARSE_DEPTH {
+        let target_sibling = (index >> level) ^ 1;
+        let prior_node = prior_index >> level;
+        siblings.push(if target_sibling == prior_node {
+            prior_nodes[level]
+        } else {
+            defaults[level]
+        });
+    }
+
+    c5_witness_from_path(
+        lot,
+        index_hash_u64,
+        prior_nodes[C5_SPARSE_DEPTH],
+        siblings,
+        F::ZERO,
+    )
+}
+
+#[cfg(test)]
+fn c5_witness_from_path(
+    lot: &SyntheticLot,
+    index_hash_u64: u64,
+    old_root: F,
+    siblings: Vec<F>,
+    old_leaf_state: F,
+) -> Result<C5Witness> {
+    let index = index_hash_u64 as u32;
+    let quotient = (index_hash_u64 >> C5_SPARSE_DEPTH) as u32;
+    let index_bits = c5_bits(index as u64);
+    let quotient_bits = c5_bits(quotient as u64);
+    let old_leaf_input = c5_leaf_input(old_leaf_state);
+    let new_leaf_input = c5_leaf_input(F::ONE);
+    let mut old_current = poseidon2_permute(old_leaf_input)[0];
+    let mut new_current = poseidon2_permute(new_leaf_input)[0];
+    let mut inputs = Vec::with_capacity(4 + C5_SPARSE_DEPTH * 2);
+    inputs.extend([
+        c5_nullifier_input(lot.lot_id, lot.secret),
+        c5_index_input(poseidon2_permute(c5_nullifier_input(lot.lot_id, lot.secret))[0]),
+        old_leaf_input,
+        new_leaf_input,
+    ]);
+
+    for (level, sibling) in siblings.iter().copied().enumerate() {
+        let bit = (index >> level) & 1;
+        let old_parent = c5_parent_input(old_current, sibling, bit);
+        let new_parent = c5_parent_input(new_current, sibling, bit);
+        old_current = poseidon2_permute(old_parent)[0];
+        new_current = poseidon2_permute(new_parent)[0];
+        inputs.extend([old_parent, new_parent]);
+    }
+
+    if old_current != old_root {
+        bail!("sparse-nullifier path does not bind to the supplied old root");
+    }
+
+    Ok(C5Witness {
+        inputs,
+        index_bits,
+        quotient_bits,
+        siblings,
+        old_root,
+        new_root: new_current,
+        nullifier: poseidon2_permute(c5_nullifier_input(lot.lot_id, lot.secret))[0],
+        state: F::ONE,
+    })
+}
+
+fn c5_trace(
+    inputs: Vec<[F; POSEIDON_WIDTH]>,
+    index_bits: &[F],
+    quotient_bits: &[F],
+    siblings: &[F],
+) -> RowMajorMatrix<F> {
+    debug_assert_eq!(inputs.len(), 4 + C5_SPARSE_DEPTH * 2);
+    debug_assert_eq!(index_bits.len(), C5_SPARSE_DEPTH);
+    debug_assert_eq!(quotient_bits.len(), C5_SPARSE_DEPTH);
+    debug_assert_eq!(siblings.len(), C5_SPARSE_DEPTH);
     let poseidon = poseidon_trace(inputs);
     debug_assert_eq!(poseidon.values.len(), POSEIDON_COLS * C5_VECTOR_LANES);
     let mut values = Vec::with_capacity(C5_WIDTH);
     values.extend_from_slice(&poseidon.values);
     values.extend_from_slice(index_bits);
+    values.extend_from_slice(quotient_bits);
+    values.extend_from_slice(siblings);
     RowMajorMatrix::new(values, C5_WIDTH)
 }
 
@@ -2113,48 +2324,74 @@ fn c5_nullifier_input(lot_id: u64, secret: u64) -> [F; POSEIDON_WIDTH] {
     ]
 }
 
-fn c5_empty_leaf_input(lot_id: u64, index: usize) -> [F; POSEIDON_WIDTH] {
+fn c5_index_input(nullifier: F) -> [F; POSEIDON_WIDTH] {
     [
-        f(lot_id),
-        f(index as u64),
+        nullifier,
+        f(POSEIDON_TAG_NULLIFIER_INDEX),
+        F::ZERO,
+        F::ZERO,
+        F::ZERO,
+        F::ZERO,
+        F::ZERO,
+        f(2),
+    ]
+}
+
+fn c5_leaf_input(state: F) -> [F; POSEIDON_WIDTH] {
+    [
+        state,
         f(POSEIDON_TAG_EMPTY),
         F::ZERO,
         F::ZERO,
         F::ZERO,
         F::ZERO,
-        f(3),
+        F::ZERO,
+        f(2),
     ]
 }
 
-fn c5_non_empty_leaf_input(lot: &SyntheticLot, index: usize) -> [F; POSEIDON_WIDTH] {
-    [
-        f(lot.lot_id + 41 + index as u64),
-        f(lot.secret + 7 + index as u64),
-        f(POSEIDON_TAG_NULLIFIER),
-        F::ZERO,
-        F::ZERO,
-        F::ZERO,
-        F::ZERO,
-        f(3),
-    ]
-}
-
-fn c5_leaf_hash(lot: &SyntheticLot, index: usize, empty_index: usize) -> F {
-    let input = if index == empty_index {
-        c5_empty_leaf_input(lot.lot_id, index)
+fn c5_parent_input(current: F, sibling: F, bit: u32) -> [F; POSEIDON_WIDTH] {
+    if bit == 0 {
+        merkle_parent_input(current, sibling, f(POSEIDON_TAG_EMPTY))
     } else {
-        c5_non_empty_leaf_input(lot, index)
-    };
-    poseidon2_permute(input)[0]
+        merkle_parent_input(sibling, current, f(POSEIDON_TAG_EMPTY))
+    }
+}
+
+fn c5_default_nodes() -> Vec<F> {
+    let mut current = poseidon2_permute(c5_leaf_input(F::ZERO))[0];
+    let mut nodes = Vec::with_capacity(C5_SPARSE_DEPTH + 1);
+    nodes.push(current);
+    for _ in 0..C5_SPARSE_DEPTH {
+        current =
+            poseidon2_permute(merkle_parent_input(current, current, f(POSEIDON_TAG_EMPTY)))[0];
+        nodes.push(current);
+    }
+    nodes
+}
+
+fn c5_bits(value: u64) -> Vec<F> {
+    (0..C5_SPARSE_DEPTH)
+        .map(|bit| {
+            if value >> bit & 1 == 1 {
+                F::ONE
+            } else {
+                F::ZERO
+            }
+        })
+        .collect()
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy)]
 enum C5Tamper {
     Duplicate,
-    WrongRoot,
+    WrongOldRoot,
+    WrongNewRoot,
     WrongPath,
+    WrongIndex,
     WrongSecret,
+    WrongState,
 }
 
 fn poseidon_trace(inputs: Vec<[F; POSEIDON_WIDTH]>) -> RowMajorMatrix<F> {
@@ -2339,7 +2576,7 @@ pub fn invalid_c5_duplicate(
     let lot = crate::synthetic::synthetic_lot(3, events, profile);
     let start = Instant::now();
     let (trace, pis) = c5_trace_and_pis(&lot, Some(C5Tamper::Duplicate))?;
-    assert!(prove_stark(&C5NullifierEmptyAir, trace, &pis).is_err());
+    assert!(prove_stark(&C5NullifierUpdateAir, trace, &pis).is_err());
     Ok((
         template,
         WitnessBundle {
@@ -2519,16 +2756,50 @@ mod tests {
     }
 
     #[test]
+    fn c5_nonempty_old_root_accepts_a_fresh_nullifier() -> Result<()> {
+        let profile = Profile::CoffeeSmall;
+        let prior_lot = synthetic_lot(6, 8, profile);
+        let lot = synthetic_lot(5, 8, profile);
+        let (trace, pis) = c5_trace_and_pis_after_prior_nullifier(&lot, &prior_lot)?;
+        prove_stark(&C5NullifierUpdateAir, trace, &pis)?;
+        Ok(())
+    }
+
+    #[test]
+    fn c5_existing_nullifier_cannot_be_inserted_again() -> Result<()> {
+        let profile = Profile::CoffeeSmall;
+        let lot = synthetic_lot(5, 8, profile);
+        let (trace, pis) = c5_trace_and_pis_replay(&lot)?;
+        assert!(prove_stark(&C5NullifierUpdateAir, trace, &pis).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn c5_duplicate_nullifier_fails() {
         assert!(invalid_c5_duplicate(8, Profile::CoffeeSmall).is_ok());
     }
 
     #[test]
-    fn c5_wrong_empty_root_fails() -> Result<()> {
+    fn c5_wrong_old_root_fails() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(5, 8, profile);
-        let (trace, pis) = c5_trace_and_pis(&lot, Some(C5Tamper::WrongRoot))?;
-        assert!(prove_stark(&C5NullifierEmptyAir, trace, &pis).is_err());
+        let (trace, pis) = c5_trace_and_pis(&lot, Some(C5Tamper::WrongOldRoot))?;
+        assert!(prove_stark(&C5NullifierUpdateAir, trace, &pis).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn c5_wrong_new_root_index_and_state_fail() -> Result<()> {
+        let profile = Profile::CoffeeSmall;
+        let lot = synthetic_lot(5, 8, profile);
+        for tamper in [
+            C5Tamper::WrongNewRoot,
+            C5Tamper::WrongIndex,
+            C5Tamper::WrongState,
+        ] {
+            let (trace, pis) = c5_trace_and_pis(&lot, Some(tamper))?;
+            assert!(prove_stark(&C5NullifierUpdateAir, trace, &pis).is_err());
+        }
         Ok(())
     }
 
@@ -2537,29 +2808,38 @@ mod tests {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(5, 8, profile);
         let (trace, pis) = c5_trace_and_pis(&lot, Some(C5Tamper::WrongSecret))?;
-        assert!(prove_stark(&C5NullifierEmptyAir, trace, &pis).is_err());
+        assert!(prove_stark(&C5NullifierUpdateAir, trace, &pis).is_err());
         Ok(())
     }
 
     #[test]
-    fn c5_wrong_empty_path_fails() -> Result<()> {
+    fn c5_wrong_sparse_path_fails() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(5, 8, profile);
         let (trace, pis) = c5_trace_and_pis(&lot, Some(C5Tamper::WrongPath))?;
-        assert!(prove_stark(&C5NullifierEmptyAir, trace, &pis).is_err());
+        assert!(prove_stark(&C5NullifierUpdateAir, trace, &pis).is_err());
         Ok(())
     }
 
     #[test]
-    fn c5_public_inputs_are_nullifier_and_empty_root_only() -> Result<()> {
+    fn c5_public_inputs_bind_old_root_new_root_nullifier_and_state() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(5, 8, profile);
         let (_, pis) = c5_trace_and_pis(&lot, None)?;
         let nullifier = poseidon2_permute(c5_nullifier_input(lot.lot_id, lot.secret))[0];
-        assert_eq!(pis.len(), 2);
-        assert_eq!(pis[0], nullifier);
-        assert_ne!(pis[0], f(lot.secret));
-        assert_ne!(pis[1], f(lot.secret));
+        assert_eq!(pis.len(), 4);
+        assert_eq!(pis[2], nullifier);
+        assert_eq!(pis[3], F::ONE);
+        assert_ne!(pis[0], pis[1]);
+        assert_ne!(pis[2], f(lot.secret));
+        Ok(())
+    }
+
+    #[test]
+    fn c5_template_reports_all_sparse_map_public_inputs() -> Result<()> {
+        let template = build_template(CircuitKind::C5, 8, Profile::CoffeeSmall)?;
+        assert_eq!(template.public_inputs, 4);
+        assert!(template.note.contains("sparse"));
         Ok(())
     }
 
