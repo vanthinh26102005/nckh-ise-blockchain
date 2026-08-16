@@ -1,3 +1,4 @@
+use crate::epcis::{EpcisEventV1, PointE6, SimplePolygon};
 use crate::types::{f, Profile, F, POSEIDON_TAG_ACTOR, THRESHOLD};
 use p3_field::PrimeCharacteristicRing;
 use p3_symmetric::Permutation;
@@ -8,7 +9,8 @@ use rand_chacha::ChaCha20Rng;
 pub struct SyntheticLot {
     pub readings: Vec<u64>,
     pub timestamps: Vec<u64>,
-    pub coords: Vec<(u64, u64)>,
+    pub coords: Vec<PointE6>,
+    pub events: Vec<EpcisEventV1>,
     pub cert_ids: Vec<u64>,
     pub lot_id: u64,
     pub secret: u64,
@@ -16,7 +18,7 @@ pub struct SyntheticLot {
     pub actor_secret: u64,
     pub role_tag: u64,
     pub epoch: u64,
-    pub polygon: Vec<(u64, u64)>,
+    pub polygon: SimplePolygon,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -28,14 +30,12 @@ pub struct HalfPlane {
 
 pub fn synthetic_lot(seed: u64, events: usize, profile: Profile) -> SyntheticLot {
     let mut rng = ChaCha20Rng::seed_from_u64(seed ^ ((events as u64) << 32) ^ profile_tag(profile));
-    let polygon = profile.polygon();
     let readings: Vec<u64> = (0..events)
         .map(|_| rng.gen_range(100..=THRESHOLD))
         .collect();
     let timestamps: Vec<u64> = (0..events)
         .map(|i| 1_700_000_000 + seed * 1000 + i as u64 * 15)
         .collect();
-    let coords = compliant_points_outside_forbidden_polygon(&mut rng, events, profile);
     let cert_ids: Vec<u64> = (0..events)
         .map(|_| rng.gen_range(10_000..=999_999))
         .collect();
@@ -45,11 +45,31 @@ pub fn synthetic_lot(seed: u64, events: usize, profile: Profile) -> SyntheticLot
     let actor_id = rng.gen_range(10_000..=99_999);
     let actor_secret = rng.gen_range(100_000_000..=999_999_999);
     let role_tag = POSEIDON_TAG_ACTOR;
+    let mut actor_public_key = [0u8; 32];
+    rng.fill(&mut actor_public_key);
+    let polygon =
+        SimplePolygon::new(profile.polygon()).expect("built-in benchmark polygon is valid");
+    let coords = compliant_points_outside_forbidden_polygon(&mut rng, events, profile);
+    let epcis_events = (0..events)
+        .map(|index| EpcisEventV1 {
+            event_id: (seed << 16) | index as u64,
+            lot_id,
+            epoch_id: epoch,
+            timestamp_ms: timestamps[index] * 1_000,
+            readings: readings[index] as u32,
+            latitude_e6: coords[index].latitude_e6,
+            longitude_e6: coords[index].longitude_e6,
+            certificate_id: cert_ids[index],
+            role: role_tag as u8,
+            actor_public_key,
+        })
+        .collect();
 
     SyntheticLot {
         readings,
         timestamps,
         coords,
+        events: epcis_events,
         cert_ids,
         lot_id,
         secret,
@@ -73,14 +93,14 @@ fn compliant_points_outside_forbidden_polygon(
     rng: &mut ChaCha20Rng,
     events: usize,
     profile: Profile,
-) -> Vec<(u64, u64)> {
-    let (x0, x1, y0, y1) = match profile {
-        Profile::CoffeeSmall => (1780, 2200, 2800, 3200),
-        Profile::CoffeeDefault => (1820, 2300, 2860, 3300),
-        Profile::Stress => (1900, 2450, 2950, 3500),
+) -> Vec<PointE6> {
+    let (lat0, lat1, lon0, lon1) = match profile {
+        Profile::CoffeeSmall => (10_820_000, 10_840_000, 106_750_000, 106_770_000),
+        Profile::CoffeeDefault => (10_825_000, 10_845_000, 106_755_000, 106_775_000),
+        Profile::Stress => (10_830_000, 10_850_000, 106_760_000, 106_780_000),
     };
     (0..events)
-        .map(|_| (rng.gen_range(x0..=x1), rng.gen_range(y0..=y1)))
+        .map(|_| PointE6::new(rng.gen_range(lat0..=lat1), rng.gen_range(lon0..=lon1)))
         .collect()
 }
 
@@ -88,10 +108,12 @@ pub fn inside_forbidden_lot(seed: u64, events: usize, profile: Profile) -> Synth
     let mut lot = synthetic_lot(seed, events, profile);
     if let Some(first) = lot.coords.first_mut() {
         *first = match profile {
-            Profile::CoffeeSmall => (1200, 2300),
-            Profile::CoffeeDefault => (1240, 2340),
-            Profile::Stress => (1260, 2360),
+            Profile::CoffeeSmall => PointE6::new(10_775_000, 106_680_000),
+            Profile::CoffeeDefault => PointE6::new(10_780_000, 106_680_000),
+            Profile::Stress => PointE6::new(10_780_000, 106_680_000),
         };
+        lot.events[0].latitude_e6 = first.latitude_e6;
+        lot.events[0].longitude_e6 = first.longitude_e6;
     }
     lot
 }
@@ -126,11 +148,15 @@ pub fn tampered_actor_lot(seed: u64, events: usize, profile: Profile) -> Synthet
     lot
 }
 
-pub fn halfplanes_for_polygon(poly: &[(u64, u64)]) -> Vec<HalfPlane> {
+pub fn halfplanes_for_polygon(poly: &[PointE6]) -> Vec<HalfPlane> {
     let mut planes = Vec::with_capacity(poly.len());
     for i in 0..poly.len() {
-        let (x1, y1) = poly[i];
-        let (x2, y2) = poly[(i + 1) % poly.len()];
+        let start = poly[i];
+        let end = poly[(i + 1) % poly.len()];
+        let x1 = start.longitude_e6;
+        let y1 = start.latitude_e6;
+        let x2 = end.longitude_e6;
+        let y2 = end.latitude_e6;
         let dx = x2 as i64 - x1 as i64;
         let dy = y2 as i64 - y1 as i64;
         let a = -(dy);

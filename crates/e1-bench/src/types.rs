@@ -1,3 +1,4 @@
+use crate::epcis::PointE6;
 use p3_goldilocks::Goldilocks;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -14,6 +15,9 @@ pub const POSEIDON_TAG_ACTOR: u64 = 4;
 pub const POSEIDON_TAG_NULLIFIER: u64 = 5;
 pub const POSEIDON_TAG_EMPTY: u64 = 6;
 pub const POSEIDON_TAG_POLYGON: u64 = 11;
+pub const POSEIDON_TAG_EVENT: u64 = 12;
+pub const POSEIDON_TAG_EVENT_BATCH: u64 = 13;
+pub const POSEIDON_TAG_NULLIFIER_INDEX: u64 = 14;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum CircuitKind {
@@ -28,7 +32,7 @@ pub enum CircuitKind {
 
 impl CircuitKind {
     pub fn all(include_placeholders: bool) -> Vec<Self> {
-        let mut circuits = vec![Self::C2, Self::C3, Self::C4, Self::C5];
+        let mut circuits = vec![Self::C1, Self::C2, Self::C3, Self::C4, Self::C5];
         if include_placeholders {
             circuits.push(Self::C1Legacy);
         }
@@ -54,7 +58,7 @@ impl CircuitKind {
             Self::C2 => "c2_poseidon2_merkle_depth16",
             Self::C3 => "c3_threshold_time",
             Self::C4 => "c4_poseidon2_actor_authorization",
-            Self::C5 => "c5_poseidon2_nullifier_empty_leaf",
+            Self::C5 => "c5_poseidon2_sparse_nullifier_depth32",
             Self::Wrapper => "wrapper_recursive_plonky3",
             Self::C1Legacy => "c1_legacy_bbox",
         }
@@ -62,11 +66,11 @@ impl CircuitKind {
 
     pub fn version(self) -> &'static str {
         match self {
-            Self::C1 => "v3-strict-outside-forbidden-polygon",
+            Self::C1 => "v4-plonky3-wgs84-polygon-poseidon2-commitments",
             Self::C2 => "v4-plonky3-poseidon2-merkle-depth16",
             Self::C3 => "v4-plonky3-threshold-time",
             Self::C4 => "v4-plonky3-poseidon2-actor-authorization",
-            Self::C5 => "v4-plonky3-poseidon2-nullifier-empty-leaf",
+            Self::C5 => "v5-plonky3-poseidon2-sparse-nullifier-depth32",
             Self::Wrapper => "v5-plonky3-recursion-github-blocked",
             Self::C1Legacy => "v1-placeholder-compat",
         }
@@ -106,29 +110,29 @@ impl Profile {
         }
     }
 
-    pub fn polygon(self) -> Vec<(u64, u64)> {
+    pub fn polygon(self) -> Vec<PointE6> {
         match self {
             Self::CoffeeSmall => vec![
-                (900, 2100),
-                (1200, 1900),
-                (1600, 2200),
-                (1450, 2600),
-                (980, 2550),
+                PointE6::new(10_760_000, 106_660_000),
+                PointE6::new(10_780_000, 106_650_000),
+                PointE6::new(10_800_000, 106_680_000),
+                PointE6::new(10_785_000, 106_720_000),
+                PointE6::new(10_765_000, 106_710_000),
             ],
             Self::CoffeeDefault => vec![
-                (850, 2050),
-                (1160, 1840),
-                (1660, 2100),
-                (1580, 2650),
-                (980, 2720),
+                PointE6::new(10_755_000, 106_655_000),
+                PointE6::new(10_780_000, 106_645_000),
+                PointE6::new(10_805_000, 106_675_000),
+                PointE6::new(10_795_000, 106_725_000),
+                PointE6::new(10_760_000, 106_730_000),
             ],
             Self::Stress => vec![
-                (760, 2050),
-                (1050, 1760),
-                (1640, 1840),
-                (1780, 2350),
-                (1450, 2840),
-                (880, 2750),
+                PointE6::new(10_750_000, 106_655_000),
+                PointE6::new(10_775_000, 106_640_000),
+                PointE6::new(10_810_000, 106_650_000),
+                PointE6::new(10_820_000, 106_690_000),
+                PointE6::new(10_790_000, 106_735_000),
+                PointE6::new(10_755_000, 106_725_000),
             ],
         }
     }

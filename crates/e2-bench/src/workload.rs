@@ -1,3 +1,4 @@
+use e1_bench::epcis::EpcisEventV1;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use rand_distr::{Distribution, Normal};
@@ -6,6 +7,7 @@ use rand_distr::{Distribution, Normal};
 pub struct EpcisEvent {
     pub event_id: usize,
     pub ingest_at_ms: u64,
+    pub payload: EpcisEventV1,
 }
 
 #[derive(Clone, Debug)]
@@ -44,9 +46,24 @@ pub fn generate_poisson_event_stream(
             break;
         }
 
+        let mut actor_public_key = [0u8; 32];
+        actor_public_key[..8].copy_from_slice(&seed.to_be_bytes());
+        actor_public_key[8..16].copy_from_slice(&(event_id as u64).to_be_bytes());
         events.push(EpcisEvent {
             event_id,
             ingest_at_ms: current_time_ms,
+            payload: EpcisEventV1 {
+                event_id: event_id as u64,
+                lot_id: 0,
+                epoch_id: seed,
+                timestamp_ms: 1_700_000_000_000 + event_id as u64 * 15_000,
+                readings: 100 + (event_id % 801) as u32,
+                latitude_e6: 10_830_000 + (event_id % 10_000) as i32,
+                longitude_e6: 106_760_000 + (event_id % 10_000) as i32,
+                certificate_id: 10_000_000 + event_id as u64,
+                role: 4,
+                actor_public_key,
+            },
         });
         event_id += 1;
     }
@@ -56,7 +73,7 @@ pub fn generate_poisson_event_stream(
 
 /// Accumulates events into lots according to truncated normal N(24, 8) in [8, 64].
 pub fn accumulate_lots(events: &[EpcisEvent], seed: u64) -> Vec<Lot> {
-    if events.is_empty() {
+    if events.len() < 8 {
         return Vec::new();
     }
 
@@ -68,17 +85,29 @@ pub fn accumulate_lots(events: &[EpcisEvent], seed: u64) -> Vec<Lot> {
     let mut event_idx = 0usize;
 
     while event_idx < events.len() {
-        // Sample target lot size in [8, 64]
-        let target_size = loop {
-            let sample_val: f64 = normal_dist.sample(&mut rng);
-            let val = sample_val.round() as i64;
-            if (8..=64).contains(&val) {
-                break val as usize;
+        let remaining = events.len() - event_idx;
+        let mut target_size = if remaining <= 64 {
+            remaining
+        } else {
+            loop {
+                let sample_val: f64 = normal_dist.sample(&mut rng);
+                let val = sample_val.round() as i64;
+                if (8..=64).contains(&val) {
+                    break val as usize;
+                }
             }
         };
+        let tail = remaining - target_size;
+        if (1..8).contains(&tail) {
+            target_size -= 8 - tail;
+        }
 
-        let end_idx = (event_idx + target_size).min(events.len());
-        let lot_events = events[event_idx..end_idx].to_vec();
+        let end_idx = event_idx + target_size;
+        let mut lot_events = events[event_idx..end_idx].to_vec();
+        for event in &mut lot_events {
+            event.payload.lot_id = lot_id as u64;
+            event.payload.epoch_id = seed;
+        }
 
         // Lot ready time is the ingestion timestamp of the last event in this lot
         let lot_ready_at_ms = lot_events.last().map(|e| e.ingest_at_ms).unwrap_or(0);
@@ -118,16 +147,29 @@ mod tests {
         let lots = accumulate_lots(&stream, 123);
         assert!(!lots.is_empty());
 
-        for (i, lot) in lots.iter().enumerate() {
+        for lot in &lots {
             let size = lot.events.len();
-            if i == lots.len() - 1 {
-                // Last lot can be smaller if stream ends
-                assert!(size >= 1 && size <= 64);
-            } else {
-                assert!(
-                    size >= 8 && size <= 64,
-                    "Lot size {} out of bounds [8, 64]",
-                    size
+            assert!(
+                (8..=64).contains(&size),
+                "Lot size {size} out of bounds [8, 64]"
+            );
+        }
+    }
+
+    #[test]
+    fn lots_assign_canonical_epcis_payloads() {
+        let stream = generate_poisson_event_stream(91, 480.0, 1.0);
+        let lots = accumulate_lots(&stream, 91);
+        for lot in lots {
+            for event in lot.events {
+                assert_eq!(event.payload.event_id, event.event_id as u64);
+                assert_eq!(event.payload.lot_id, lot.lot_id as u64);
+                assert_eq!(
+                    e1_bench::epcis::EpcisEventV1::decode_canonical(
+                        &event.payload.canonical_bytes()
+                    )
+                    .unwrap(),
+                    event.payload
                 );
             }
         }
