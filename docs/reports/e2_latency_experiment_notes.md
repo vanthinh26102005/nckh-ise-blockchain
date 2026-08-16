@@ -80,7 +80,7 @@ Có thể claim:
 ## 7. Output files
 
 ```
-results/e2/
+results/e2/archive/legacy/
 ├── raw.csv         ← ~863K rows, quá lớn, gitignored
 ├── summary.csv     ← 1 row summary
 ├── metadata.json   ← config + disclaimers

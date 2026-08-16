@@ -30,7 +30,7 @@ cargo test
 cargo run --release -- --events 8,16,32,64 --seeds 3 --circuits c2,c3,c4,c5
 ```
 
-Kết quả benchmark mặc định nằm ở `results/e1/raw.csv`.
+Kết quả benchmark lịch sử của báo cáo này nằm ở `results/e1/archive/legacy/raw.csv`.
 
 ## 4. Kết luận
 

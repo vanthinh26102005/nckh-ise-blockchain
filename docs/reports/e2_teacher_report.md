@@ -49,7 +49,7 @@ Total latency = `confirmed_at_ms − ingest_at_ms`.
 
 ## 4. Kết quả
 
-Từ `results/e2/summary.csv`:
+Từ `results/e2/archive/legacy/summary.csv`:
 
 | Metric | Latency (ms) | Latency (s) |
 |---|---:|---:|
@@ -64,7 +64,7 @@ Phần lớn events hoàn tất trong khoảng 13–14 giây. Giá trị median 
 
 Min ~12.3s xảy ra khi event rơi đúng lúc lot gần đủ và prover đang rỗi. Max ~21s xảy ra khi event phải chờ lot tích lũy lâu + prover bận lot trước.
 
-Biểu đồ CDF và histogram: `results/e2/cdf.png`.
+Biểu đồ CDF và histogram: `results/e2/archive/legacy/cdf.png`.
 
 ---
 
@@ -105,8 +105,8 @@ make e2-quick    # smoke test: 5 min, 3 seeds
 
 Nếu đã có raw CSV, chỉ cần sinh lại plot + report:
 ```bash
-python3 scripts/e2_analyze.py --raw results/e2/raw.csv --out-dir results/e2 \
-  --cdf-out results/e2/cdf.png --report-out results/e2/report.md
+python3 scripts/e2_analyze.py --raw results/e2/full/raw.csv --out-dir results/e2/full \
+  --cdf-out results/e2/full/cdf.png --report-out results/e2/full/report.md
 ```
 
 ---
@@ -115,10 +115,10 @@ python3 scripts/e2_analyze.py --raw results/e2/raw.csv --out-dir results/e2 \
 
 | Tài liệu | Đường dẫn |
 |---|---|
-| E2 summary CSV | `results/e2/summary.csv` |
-| E2 metadata | `results/e2/metadata.json` |
-| E2 CDF plot | `results/e2/cdf.png` |
-| E2 auto-generated report | `results/e2/report.md` |
+| E2 summary CSV | `results/e2/archive/legacy/summary.csv` |
+| E2 metadata | `results/e2/archive/legacy/metadata.json` |
+| E2 CDF plot | `results/e2/archive/legacy/cdf.png` |
+| E2 auto-generated report | `results/e2/archive/legacy/report.md` |
 | E2 bench crate | `crates/e2-bench/` |
-| E1 teacher report | `reports/e1_teacher_report.md` |
-| E1 tuần 2 report | `E1-Ngo_Van_Thinh/docs/06-report-to-teacher-week2.md` |
+| E1 teacher report | `docs/reports/e1_teacher_report.md` |
+| E1 tuần 2 report | `docs/research/e1/06-report-to-teacher-week2.md` |

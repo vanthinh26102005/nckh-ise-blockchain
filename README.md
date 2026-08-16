@@ -2,6 +2,13 @@
 
 MVP benchmark cho E1 trong hướng nghiên cứu "EPCIS-Aware Recursive ZK-Rollup for EUDR Traceability".
 
+## Repository Layout
+
+- `crates/`: Rust workspaces for E1 and E2.
+- `docs/`: research documents, reports, stage submissions, and references; see `docs/README.md`.
+- `results/`: benchmark outputs grouped by experiment and run kind; see `results/README.md`.
+- `scripts/`: bootstrap and result-analysis scripts.
+
 ## E1 Cryptographic Benchmark
 
 ### Setup
@@ -21,11 +28,11 @@ make e1-quick
 
 `make e1-quick` chạy smoke base Plonky3 C1-C5 với `events/lot = 8`, `seed = 1`:
 
-- `results/e1_raw.csv`
-- `results/e1_table1.csv`
-- `results/e1_plots.png`
-- `results/e1_metadata.json`
-- `results/e1_report.md`
+- `results/e1/quick/raw.csv`
+- `results/e1/quick/summary.csv`
+- `results/e1/quick/plots.png`
+- `results/e1/quick/metadata.json`
+- `results/e1/quick/report.md`
 
 ### Full MVP run
 
@@ -33,7 +40,7 @@ make e1-quick
 make e1
 ```
 
-Lệnh này giữ output V2 compatibility ở `results/e1/`. Bản strict theo guide chạy bằng:
+Lệnh này ghi output đầy đủ vào `results/e1/full/`. Bản strict theo guide chạy bằng:
 
 ```bash
 make e1-strict
@@ -69,9 +76,15 @@ circuit_version,build_ms,witness_ms,setup_ms,gate_count,public_inputs,inner_prov
 
 ### CLI
 
+Khi chạy CLI trực tiếp, tạo trước thư mục output:
+
+```bash
+mkdir -p results/e1/strict
+```
+
 ```bash
 cargo run --release -p e1-bench -- \
-  --out results/e1_raw.csv \
+  --out results/e1/strict/raw.csv \
   --events 8,16,32,64 \
   --seeds 30 \
   --circuits all \
@@ -100,12 +113,12 @@ make e2-quick
 
 Chạy quick profile: `lambda = 480 events/min`, `duration = 5 min`, `seeds = 3`, `l1-mode = mock`.
 
-Sinh các file output trong `results/e2/`:
-- `results/e2/raw.csv`
-- `results/e2/summary.csv`
-- `results/e2/metadata.json`
-- `results/e2/report.md`
-- `results/e2/cdf.png`
+Sinh các file output trong `results/e2/quick/`:
+- `results/e2/quick/raw.csv`
+- `results/e2/quick/summary.csv`
+- `results/e2/quick/metadata.json`
+- `results/e2/quick/report.md`
+- `results/e2/quick/cdf.png`
 
 ### Full Run (Stage 3 Guide Aligned)
 
@@ -117,6 +130,12 @@ Chạy full workload: `lambda = 480 events/min`, `duration = 60 min`, `seeds = 3
 
 ### CLI Direct Usage
 
+Khi chạy CLI trực tiếp, tạo trước thư mục output tương ứng:
+
+```bash
+mkdir -p results/e2/quick results/e2/strict
+```
+
 ```bash
 cargo run --release -p e2-bench -- \
   --profile quick \
@@ -124,9 +143,9 @@ cargo run --release -p e2-bench -- \
   --duration-min 5 \
   --seeds 3 \
   --l1-mode mock \
-  --out results/e2/raw.csv \
-  --summary-out results/e2/summary.csv \
-  --metadata-out results/e2/metadata.json
+  --out results/e2/quick/raw.csv \
+  --summary-out results/e2/quick/summary.csv \
+  --metadata-out results/e2/quick/metadata.json
 ```
 
 Full run CLI:
@@ -138,9 +157,9 @@ cargo run --release -p e2-bench -- \
   --duration-min 60 \
   --seeds 30 \
   --l1-mode anvil \
-  --out results/e2/raw.csv \
-  --summary-out results/e2/summary.csv \
-  --metadata-out results/e2/metadata.json
+  --out results/e2/strict/raw.csv \
+  --summary-out results/e2/strict/summary.csv \
+  --metadata-out results/e2/strict/metadata.json
 ```
 
 ### Disclaimers & Disclosures
