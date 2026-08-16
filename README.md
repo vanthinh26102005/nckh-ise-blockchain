@@ -45,7 +45,7 @@ make e1-strict
 - `c1_polygon_outside`: chứng minh mọi EPCIS event private có toạ độ WGS-84 microdegree nằm ngoài polygon simple private (3–32 đỉnh), với commitment Poseidon2 cho polygon và batch event.
 - `c3_threshold_time`: chứng minh KPI readings không vượt ngưỡng và event time monotonic.
 - `c4_poseidon2_actor_authorization`: chứng minh actor authorization bằng Poseidon2 và private actor secret; không claim EdDSA/Ed25519.
-- `c5_poseidon2_nullifier_empty_leaf`: chứng minh Poseidon2(lot_id, secret, tag) và hashed empty-leaf non-membership MVP.
+- `c5_poseidon2_sparse_nullifier_depth32`: chứng minh cập nhật sparse nullifier map 32-bit từ `oldRoot` sang `newRoot`; `oldRoot`, `newRoot`, nullifier và trạng thái là public inputs. Việc lưu trạng thái map xuyên các giao dịch sẽ được nối vào E2/Fabric ở PR4.
 
 `wrapper_recursive_plonky3` thử chạy Plonky3-recursion thật khi bật `--features recursion`; nếu upstream panic/fail, row ghi blocker minh bạch và không emit mocked recursive proof.
 
