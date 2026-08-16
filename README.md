@@ -19,7 +19,7 @@ make test
 make e1-quick
 ```
 
-`make e1-quick` chạy smoke base Plonky3 C2-C5 với `events/lot = 8`, `seed = 1`:
+`make e1-quick` chạy smoke base Plonky3 C1-C5 với `events/lot = 8`, `seed = 1`:
 
 - `results/e1_raw.csv`
 - `results/e1_table1.csv`
@@ -42,6 +42,7 @@ make e1-strict
 `make e1-strict` chạy `events/lot = 8,16,32,64`, `30 seed/cell`, profile `coffee-default`, cho các circuit:
 
 - `c2_poseidon2_merkle_depth16`: chứng minh certificate/event membership MVP với Poseidon2 path depth 16.
+- `c1_polygon_outside`: chứng minh mọi EPCIS event private có toạ độ WGS-84 microdegree nằm ngoài polygon simple private (3–32 đỉnh), với commitment Poseidon2 cho polygon và batch event.
 - `c3_threshold_time`: chứng minh KPI readings không vượt ngưỡng và event time monotonic.
 - `c4_poseidon2_actor_authorization`: chứng minh actor authorization bằng Poseidon2 và private actor secret; không claim EdDSA/Ed25519.
 - `c5_poseidon2_nullifier_empty_leaf`: chứng minh Poseidon2(lot_id, secret, tag) và hashed empty-leaf non-membership MVP.
@@ -144,6 +145,6 @@ cargo run --release -p e2-bench -- \
 
 ### Disclaimers & Disclosures
 
-- E2 tái sử dụng E1 Plonky3 base proofs (C2–C5), và proof window hiện tính `witness_ms + prove_ms` được cache theo circuit và lot size; reusable template/setup time không nằm trong `proof_start_ms` → `proof_end_ms`.
+- E2 mang `EpcisEventV1` canonical (86-byte big-endian) trong workload. C1 được prove trên payload của từng lot; C2–C5 vẫn dùng cache timing theo circuit/lot size cho prototype hiện tại, và sẽ bị bỏ trong benchmark thật PR4.
 - Report ghi rõ đây là **base proof pipeline latency**, không claim full recursive rollup latency nếu Plonky3 recursive wrapper vẫn đang blocked.
 - L1 confirmation hiện là deterministic simulation: `mock` ~12s, `local/anvil` ~1s, `sepolia` ~15s. Chưa submit transaction thật lên Anvil/Sepolia.

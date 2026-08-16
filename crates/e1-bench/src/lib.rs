@@ -1,4 +1,5 @@
 pub mod backend;
+pub mod epcis;
 pub mod runner;
 pub mod synthetic;
 pub mod templates;

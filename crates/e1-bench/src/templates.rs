@@ -1,8 +1,10 @@
 use crate::backend::ProofStats;
+use crate::epcis::{EpcisEventV1, PointE6, SimplePolygon, MAX_POLYGON_VERTICES};
 use crate::synthetic::{poseidon2_permute, tampered_actor_lot, SyntheticLot};
 use crate::types::{
-    f, CircuitKind, Profile, F, POSEIDON_TAG_CERT, POSEIDON_TAG_EMPTY, POSEIDON_TAG_NULLIFIER,
-    RANGE_BITS, STRICT_MERKLE_DEPTH, STRICT_MERKLE_LEAVES, THRESHOLD,
+    f, signed_f, CircuitKind, Profile, F, POSEIDON_TAG_CERT, POSEIDON_TAG_EMPTY,
+    POSEIDON_TAG_EVENT_BATCH, POSEIDON_TAG_NULLIFIER, POSEIDON_TAG_POLYGON, RANGE_BITS,
+    STRICT_MERKLE_DEPTH, STRICT_MERKLE_LEAVES, THRESHOLD,
 };
 use anyhow::{anyhow, bail, Result};
 use core::borrow::Borrow;
@@ -60,7 +62,8 @@ use std::time::Instant;
 
 const POSEIDON_WIDTH: usize = 8;
 const GOLDILOCKS_SBOX_DEGREE: u64 = 7;
-const SBOX_REGISTERS: usize = 0;
+const SBOX_REGISTERS: usize = 1;
+const FRI_LOG_BLOWUP: usize = 2;
 const HALF_FULL_ROUNDS: usize = GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS;
 const PARTIAL_ROUNDS: usize = GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8;
 const POSEIDON_COLS: usize = p3_poseidon2_air::num_cols::<
@@ -88,6 +91,59 @@ const C3_DIFF_BITS_START: usize = C3_READING_BITS_START + RANGE_BITS;
 const C3_DELTA_BITS_START: usize = C3_DIFF_BITS_START + RANGE_BITS;
 const C3_WIDTH: usize = C3_DELTA_BITS_START + RANGE_BITS;
 const C3_MAX_RANGE_VALUE: u64 = (1u64 << RANGE_BITS) - 1;
+const C1_COMPARE_BITS: usize = 29;
+const C1_ORIENT_BITS: usize = 56;
+
+const S_AUX: usize = POSEIDON_COLS;
+const S_PX: usize = S_AUX;
+const S_PY: usize = S_PX + 1;
+const S_AX: usize = S_PY + 1;
+const S_AY: usize = S_AX + 1;
+const S_BX: usize = S_AY + 1;
+const S_BY: usize = S_BX + 1;
+const S_FX: usize = S_BY + 1;
+const S_FY: usize = S_FX + 1;
+const S_PHASE: usize = S_FY + 1;
+const S_EDGE: usize = S_PHASE + 1;
+const S_EDGE_ZERO: usize = S_EDGE + 1;
+const S_EDGE_INV: usize = S_EDGE_ZERO + 1;
+const S_LAST: usize = S_EDGE_INV + 1;
+const S_REAL: usize = S_LAST + 1;
+const S_REMAINING: usize = S_REAL + 1;
+const S_BATCH_STATE: usize = S_REMAINING + 1;
+const S_POLY_STATE: usize = S_BATCH_STATE + 1;
+const S_OUTPUT: usize = S_POLY_STATE + 1;
+const S_PARITY: usize = S_OUTPUT + 1;
+const S_CROSS: usize = S_PARITY + 1;
+const S_AY_GT: usize = S_CROSS + 1;
+const S_BY_GT: usize = S_AY_GT + 1;
+const S_AX_GT: usize = S_BY_GT + 1;
+const S_BX_GT: usize = S_AX_GT + 1;
+const S_AY_EQ: usize = S_BX_GT + 1;
+const S_BY_EQ: usize = S_AY_EQ + 1;
+const S_AX_EQ: usize = S_BY_EQ + 1;
+const S_BX_EQ: usize = S_AX_EQ + 1;
+const S_AY_INV: usize = S_BX_EQ + 1;
+const S_BY_INV: usize = S_AY_INV + 1;
+const S_AX_INV: usize = S_BY_INV + 1;
+const S_BX_INV: usize = S_AX_INV + 1;
+const S_DY_ZERO: usize = S_BX_INV + 1;
+const S_DY_INV: usize = S_DY_ZERO + 1;
+const S_OMAG: usize = S_DY_INV + 1;
+const S_OMAG_INV: usize = S_OMAG + 1;
+const S_OZERO: usize = S_OMAG_INV + 1;
+const S_OPOS: usize = S_OZERO + 1;
+const S_LAT_SELECT: usize = S_OPOS + 1;
+const S_LAT_INV: usize = S_LAT_SELECT + 1;
+const S_LON_SELECT: usize = S_LAT_INV + 1;
+const S_LON_INV: usize = S_LON_SELECT + 1;
+const S_Y_CLOSED: usize = S_LON_INV + 1;
+const S_X_CLOSED: usize = S_Y_CLOSED + 1;
+const S_EDGE_BITS: usize = S_X_CLOSED + 1;
+const S_COMPARE_START: usize = S_EDGE_BITS + 5;
+const S_COMPARE_WIDTH: usize = 3 + 2 * C1_COMPARE_BITS;
+const S_ORIENT_BITS: usize = S_COMPARE_START + 4 * S_COMPARE_WIDTH;
+const S_WIDTH: usize = S_ORIENT_BITS + C1_ORIENT_BITS;
 
 type Challenge = BinomialExtensionField<F, 2>;
 type Perm = Poseidon2Goldilocks<POSEIDON_WIDTH>;
@@ -178,8 +234,8 @@ pub fn build_template(
     let start = Instant::now();
     let (public_inputs, note) = match kind {
         CircuitKind::C1 => (
-            0,
-            "blocked;not-ported:c1 geofence is outside the Plonky3 base scope for this E1 pass",
+            2,
+            "research;real:c1 proves every private WGS-84 event point is strictly outside a private simple polygon, bound by Poseidon2 commitments",
         ),
         CircuitKind::C2 => (
             1,
@@ -227,6 +283,7 @@ pub fn prove_and_verify(
         bail!("template profile mismatch");
     }
     match template.kind {
+        CircuitKind::C1 => prove_c1(lot, template.events),
         CircuitKind::C2 => prove_c2(lot, seed, template.events),
         CircuitKind::C3 => prove_c3(lot, template.events),
         CircuitKind::C4 => prove_c4(lot),
@@ -234,7 +291,7 @@ pub fn prove_and_verify(
         CircuitKind::Wrapper => bail!(
             "Plonky3 recursion integration is only available through the wrapper runner with --features recursion"
         ),
-        CircuitKind::C1 | CircuitKind::C1Legacy => {
+        CircuitKind::C1Legacy => {
             bail!(
                 "{} is disabled in the Plonky3 base backend",
                 template.kind.as_str()
@@ -264,6 +321,9 @@ pub fn witness_for(
 ) -> Result<WitnessBundle> {
     let start = Instant::now();
     match template.kind {
+        CircuitKind::C1 => {
+            let _ = c1_serial_trace_and_pis(lot, template.events)?;
+        }
         CircuitKind::C2 => {
             let _ = c2_trace_and_pis(lot, seed, template.events, None)?;
         }
@@ -275,7 +335,7 @@ pub fn witness_for(
             let _ = c5_trace_and_pis(lot, None)?;
         }
         CircuitKind::Wrapper => bail!("recursive witness is blocked"),
-        CircuitKind::C1 | CircuitKind::C1Legacy => {
+        CircuitKind::C1Legacy => {
             bail!("disabled circuit")
         }
     }
@@ -302,7 +362,7 @@ fn config() -> MyConfig {
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
     let dft = Dft::default();
     let fri_params = FriParameters {
-        log_blowup: 2,
+        log_blowup: FRI_LOG_BLOWUP,
         log_final_poly_len: 0,
         max_log_arity: 1,
         num_queries: 8,
@@ -676,6 +736,618 @@ pub fn prove_recursive_wrapper(
         proof_bytes,
         inner_prove_ms,
     })
+}
+
+fn prove_c1(lot: &SyntheticLot, events: usize) -> Result<ProofStats> {
+    let witness_start = Instant::now();
+    let (trace, pis) = c1_serial_trace_and_pis(lot, events)?;
+    let witness_ms = witness_start.elapsed().as_secs_f64() * 1000.0;
+    let (prove_ms, verify_ms, proof_bytes) = prove_stark(
+        &C1SerialAir {
+            events,
+            level: usize::MAX,
+        },
+        trace,
+        &pis,
+    )?;
+    Ok(ProofStats {
+        witness_ms,
+        prove_ms,
+        verify_ms,
+        proof_bytes,
+    })
+}
+
+fn c1_padded_vertices(polygon: &SimplePolygon) -> Vec<PointE6> {
+    let mut vertices = polygon.vertices().to_vec();
+    let last = *vertices
+        .last()
+        .expect("SimplePolygon validates its minimum vertex count");
+    vertices.resize(MAX_POLYGON_VERTICES, last);
+    vertices
+}
+
+fn c1_polygon_input(acc: F, vertex: PointE6) -> [F; POSEIDON_WIDTH] {
+    [
+        acc,
+        f((vertex.longitude_e6 as i64 + 180_000_000) as u64),
+        f((vertex.latitude_e6 as i64 + 90_000_000) as u64),
+        f(POSEIDON_TAG_POLYGON),
+        F::ZERO,
+        F::ZERO,
+        F::ZERO,
+        f(4),
+    ]
+}
+
+fn c1_polygon_root(vertices: &[PointE6]) -> F {
+    vertices
+        .iter()
+        .fold(f(POSEIDON_TAG_POLYGON), |acc, vertex| {
+            poseidon2_permute(c1_polygon_input(acc, *vertex))[0]
+        })
+}
+
+fn c1_closed_intervals(point: PointE6, start: PointE6, end: PointE6) -> (F, F) {
+    let y_straddle =
+        (start.latitude_e6 > point.latitude_e6) != (end.latitude_e6 > point.latitude_e6);
+    let y_closed = y_straddle
+        || start.latitude_e6 == point.latitude_e6
+        || end.latitude_e6 == point.latitude_e6;
+    let x_straddle =
+        (start.longitude_e6 > point.longitude_e6) != (end.longitude_e6 > point.longitude_e6);
+    let x_closed = x_straddle
+        || start.longitude_e6 == point.longitude_e6
+        || end.longitude_e6 == point.longitude_e6;
+    (
+        if y_closed { F::ONE } else { F::ZERO },
+        if x_closed { F::ONE } else { F::ZERO },
+    )
+}
+
+fn c1_serial_trace_and_pis(
+    lot: &SyntheticLot,
+    events: usize,
+) -> Result<(RowMajorMatrix<F>, Vec<F>)> {
+    if !(8..=64).contains(&events) || lot.events.len() != events {
+        bail!("c1 requires exactly 8 to 64 EPCIS events");
+    }
+    for event in &lot.events {
+        event.validate()?;
+    }
+    let vertices = c1_padded_vertices(&lot.polygon);
+    let polygon_root = c1_polygon_root(&vertices);
+    let height = events.next_power_of_two() * MAX_POLYGON_VERTICES * 2;
+    let real_edges = events * MAX_POLYGON_VERTICES;
+    let mut inputs = Vec::with_capacity(height);
+    let mut aux = vec![F::ZERO; height * (S_WIDTH - S_AUX)];
+    let mut batch_state = f(POSEIDON_TAG_EVENT_BATCH);
+    let mut poly_state = f(POSEIDON_TAG_POLYGON);
+    let mut parity = F::ZERO;
+
+    for row in 0..height {
+        let phase = row & 1;
+        let pair = row / 2;
+        let edge = pair % MAX_POLYGON_VERTICES;
+        let real = pair < real_edges;
+        let event = &lot.events[(pair / MAX_POLYGON_VERTICES).min(events - 1)];
+        let point = event.point();
+        let start = vertices[edge];
+        let end = vertices[(edge + 1) % MAX_POLYGON_VERTICES];
+        let batch_before = batch_state;
+        let poly_before = poly_state;
+        let (input, output, cross, parity_before) = if phase == 0 {
+            let word = if real && edge < 23 {
+                c1_event_words(event)[edge]
+            } else {
+                F::ZERO
+            };
+            let input = [
+                batch_state,
+                word,
+                f(POSEIDON_TAG_EVENT_BATCH),
+                F::ZERO,
+                F::ZERO,
+                F::ZERO,
+                F::ZERO,
+                f(3),
+            ];
+            let output = poseidon2_permute(input)[0];
+            batch_state = output;
+            let before = parity;
+            if c1_crosses_right(point, start, end) {
+                parity = F::ONE - parity;
+            }
+            (input, output, c1_crosses_right(point, start, end), before)
+        } else {
+            let input = c1_polygon_input(poly_state, start);
+            let output = poseidon2_permute(input)[0];
+            if edge + 1 == MAX_POLYGON_VERTICES {
+                poly_state = f(POSEIDON_TAG_POLYGON);
+            } else {
+                poly_state = output;
+            }
+            let before = parity;
+            if edge + 1 == MAX_POLYGON_VERTICES {
+                parity = F::ZERO;
+            }
+            (input, output, false, before)
+        };
+        inputs.push(input);
+        let base = row * (S_WIDTH - S_AUX);
+        s_fill_aux(
+            &mut aux[base..base + (S_WIDTH - S_AUX)],
+            point,
+            start,
+            end,
+            vertices[0],
+            phase,
+            edge,
+            real,
+            real_edges - pair.min(real_edges),
+            batch_before,
+            poly_before,
+            output,
+            parity_before,
+            cross,
+        );
+    }
+
+    let poseidon_rows = inputs
+        .into_iter()
+        .flat_map(|input| poseidon_trace(vec![input]).values)
+        .collect::<Vec<_>>();
+    let mut values = Vec::with_capacity(height * S_WIDTH);
+    for row in 0..height {
+        values.extend_from_slice(&poseidon_rows[row * POSEIDON_COLS..(row + 1) * POSEIDON_COLS]);
+        let base = row * (S_WIDTH - S_AUX);
+        values.extend_from_slice(&aux[base..base + (S_WIDTH - S_AUX)]);
+    }
+    Ok((
+        RowMajorMatrix::new(values, S_WIDTH),
+        vec![polygon_root, batch_state],
+    ))
+}
+
+fn c1_event_words(event: &EpcisEventV1) -> [F; 23] {
+    let hi = |value: u64| f(value >> 32);
+    let lo = |value: u64| f(value & u32::MAX as u64);
+    let mut words = [F::ZERO; 23];
+    words[..15].copy_from_slice(&[
+        f(1),
+        hi(event.event_id),
+        lo(event.event_id),
+        hi(event.lot_id),
+        lo(event.lot_id),
+        hi(event.epoch_id),
+        lo(event.epoch_id),
+        hi(event.timestamp_ms),
+        lo(event.timestamp_ms),
+        f(event.readings as u64),
+        f((event.latitude_e6 as i64 + 90_000_000) as u64),
+        f((event.longitude_e6 as i64 + 180_000_000) as u64),
+        hi(event.certificate_id),
+        lo(event.certificate_id),
+        f(event.role as u64),
+    ]);
+    for (index, chunk) in event.actor_public_key.chunks_exact(4).enumerate() {
+        words[15 + index] =
+            f(u32::from_be_bytes(chunk.try_into().expect("4-byte key chunk")) as u64);
+    }
+    words
+}
+
+fn c1_crosses_right(point: PointE6, start: PointE6, end: PointE6) -> bool {
+    let straddles =
+        (start.latitude_e6 > point.latitude_e6) != (end.latitude_e6 > point.latitude_e6);
+    let orientation = (end.longitude_e6 as i128 - start.longitude_e6 as i128)
+        * (point.latitude_e6 as i128 - start.latitude_e6 as i128)
+        - (end.latitude_e6 as i128 - start.latitude_e6 as i128)
+            * (point.longitude_e6 as i128 - start.longitude_e6 as i128);
+    straddles && ((orientation > 0) == (end.latitude_e6 > point.latitude_e6))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn s_fill_aux(
+    values: &mut [F],
+    point: PointE6,
+    start: PointE6,
+    end: PointE6,
+    first: PointE6,
+    phase: usize,
+    edge: usize,
+    real: bool,
+    remaining: usize,
+    batch_state: F,
+    poly_state: F,
+    output: F,
+    parity: F,
+    cross: bool,
+) {
+    let set = |values: &mut [F], column: usize, value: F| values[column - S_AUX] = value;
+    set(values, S_PX, signed_f(point.longitude_e6 as i64));
+    set(values, S_PY, signed_f(point.latitude_e6 as i64));
+    set(values, S_AX, signed_f(start.longitude_e6 as i64));
+    set(values, S_AY, signed_f(start.latitude_e6 as i64));
+    set(values, S_BX, signed_f(end.longitude_e6 as i64));
+    set(values, S_BY, signed_f(end.latitude_e6 as i64));
+    set(values, S_FX, signed_f(first.longitude_e6 as i64));
+    set(values, S_FY, signed_f(first.latitude_e6 as i64));
+    set(values, S_PHASE, f(phase as u64));
+    set(values, S_EDGE, f(edge as u64));
+    set(
+        values,
+        S_EDGE_ZERO,
+        if edge == 0 { F::ONE } else { F::ZERO },
+    );
+    set(
+        values,
+        S_EDGE_INV,
+        if edge == 0 {
+            F::ZERO
+        } else {
+            f(edge as u64).inverse()
+        },
+    );
+    set(
+        values,
+        S_LAST,
+        if edge + 1 == MAX_POLYGON_VERTICES {
+            F::ONE
+        } else {
+            F::ZERO
+        },
+    );
+    set(values, S_REAL, if real { F::ONE } else { F::ZERO });
+    set(values, S_REMAINING, f(remaining as u64));
+    set(values, S_BATCH_STATE, batch_state);
+    set(values, S_POLY_STATE, poly_state);
+    set(values, S_OUTPUT, output);
+    set(values, S_PARITY, parity);
+    set(values, S_CROSS, if cross { F::ONE } else { F::ZERO });
+
+    let px = point.longitude_e6 as i64;
+    let py = point.latitude_e6 as i64;
+    let ax = start.longitude_e6 as i64;
+    let ay = start.latitude_e6 as i64;
+    let bx = end.longitude_e6 as i64;
+    let by = end.latitude_e6 as i64;
+    for (index, (left, right)) in [(ay, py), (by, py), (ax, px), (bx, px)]
+        .into_iter()
+        .enumerate()
+    {
+        s_fill_comparison(values, index, left, right);
+        let equal_col = [S_AY_EQ, S_BY_EQ, S_AX_EQ, S_BX_EQ][index];
+        let inverse_col = [S_AY_INV, S_BY_INV, S_AX_INV, S_BX_INV][index];
+        let difference = left - right;
+        set(
+            values,
+            equal_col,
+            if difference == 0 { F::ONE } else { F::ZERO },
+        );
+        set(
+            values,
+            inverse_col,
+            if difference == 0 {
+                F::ZERO
+            } else {
+                signed_f(difference).inverse()
+            },
+        );
+    }
+    let dy = by - ay;
+    set(values, S_DY_ZERO, if dy == 0 { F::ONE } else { F::ZERO });
+    set(
+        values,
+        S_DY_INV,
+        if dy == 0 {
+            F::ZERO
+        } else {
+            signed_f(dy).inverse()
+        },
+    );
+    let orient = (bx - ax) as i128 * (py - ay) as i128 - (by - ay) as i128 * (px - ax) as i128;
+    let mag = orient.unsigned_abs() as u64;
+    set(values, S_OMAG, f(mag));
+    set(
+        values,
+        S_OMAG_INV,
+        if mag == 0 { F::ZERO } else { f(mag).inverse() },
+    );
+    set(values, S_OZERO, if mag == 0 { F::ONE } else { F::ZERO });
+    set(values, S_OPOS, if orient > 0 { F::ONE } else { F::ZERO });
+    s_fill_edge_equal(values, S_LAT_SELECT, S_LAT_INV, edge, 10);
+    s_fill_edge_equal(values, S_LON_SELECT, S_LON_INV, edge, 11);
+    let (y_closed, x_closed) = c1_closed_intervals(point, start, end);
+    set(values, S_Y_CLOSED, y_closed);
+    set(values, S_X_CLOSED, x_closed);
+    s_fill_bits(values, S_EDGE_BITS, edge as u64, 5);
+    s_fill_bits(values, S_ORIENT_BITS, mag, C1_ORIENT_BITS);
+}
+
+fn s_fill_edge_equal(values: &mut [F], select: usize, inverse: usize, edge: usize, target: usize) {
+    let difference = edge as i64 - target as i64;
+    values[select - S_AUX] = if difference == 0 { F::ONE } else { F::ZERO };
+    values[inverse - S_AUX] = if difference == 0 {
+        F::ZERO
+    } else {
+        signed_f(difference).inverse()
+    };
+}
+
+fn s_fill_comparison(values: &mut [F], index: usize, left: i64, right: i64) {
+    let start = S_COMPARE_START + index * S_COMPARE_WIDTH;
+    let (greater, greater_diff, other_diff) = if left > right {
+        (F::ONE, (left - right - 1) as u64, 0)
+    } else {
+        (F::ZERO, 0, (right - left) as u64)
+    };
+    values[start - S_AUX] = greater;
+    values[start + 1 - S_AUX] = f(greater_diff);
+    values[start + 2 - S_AUX] = f(other_diff);
+    s_fill_bits(values, start + 3, greater_diff, C1_COMPARE_BITS);
+    s_fill_bits(
+        values,
+        start + 3 + C1_COMPARE_BITS,
+        other_diff,
+        C1_COMPARE_BITS,
+    );
+}
+
+fn s_fill_bits(values: &mut [F], start: usize, value: u64, bits: usize) {
+    for bit in 0..bits {
+        values[start + bit - S_AUX] = if value >> bit & 1 == 1 {
+            F::ONE
+        } else {
+            F::ZERO
+        };
+    }
+}
+
+pub struct C1SerialAir {
+    events: usize,
+    level: usize,
+}
+
+impl BaseAir<F> for C1SerialAir {
+    fn width(&self) -> usize {
+        S_WIDTH
+    }
+    fn main_next_row_columns(&self) -> Vec<usize> {
+        if self.level == 0 {
+            vec![]
+        } else {
+            (0..S_WIDTH).collect()
+        }
+    }
+    fn num_public_values(&self) -> usize {
+        2
+    }
+    fn max_constraint_degree(&self) -> Option<usize> {
+        None
+    }
+}
+
+impl<AB: AirBuilder<F = F>> Air<AB> for C1SerialAir {
+    fn eval(&self, builder: &mut AB) {
+        let polygon_root: AB::Expr = builder.public_values()[0].into();
+        let event_root: AB::Expr = builder.public_values()[1].into();
+        let main = builder.main();
+        let local = main.current_slice();
+        let next = main.next_slice();
+        let poseidon = poseidon_lane::<AB>(local, 0);
+        let next_poseidon = poseidon_lane::<AB>(next, 0);
+        eval_poseidon2_cols(builder, poseidon);
+        if self.level == 0 {
+            return;
+        }
+        let poseidon_out = poseidon.ending_full_rounds[HALF_FULL_ROUNDS - 1].post[0];
+
+        let px = local[S_PX];
+        let py = local[S_PY];
+        let ax = local[S_AX];
+        let ay = local[S_AY];
+        let bx = local[S_BX];
+        let by = local[S_BY];
+        let fx = local[S_FX];
+        let fy = local[S_FY];
+        let phase = local[S_PHASE];
+        let edge = local[S_EDGE];
+        let edge_zero = local[S_EDGE_ZERO];
+        let edge_inv = local[S_EDGE_INV];
+        let last = local[S_LAST];
+        let real = local[S_REAL];
+        let remaining = local[S_REMAINING];
+        let batch = local[S_BATCH_STATE];
+        let poly = local[S_POLY_STATE];
+        let output = local[S_OUTPUT];
+        let parity = local[S_PARITY];
+        let cross = local[S_CROSS];
+
+        for value in [phase, edge_zero, last, real, parity, cross] {
+            s_bool(builder, value);
+        }
+        builder.assert_zero(edge_zero * edge);
+        builder.assert_zero(edge * edge_inv + edge_zero - F::ONE);
+        builder.assert_zero(last * (edge - f((MAX_POLYGON_VERTICES - 1) as u64)));
+        s_range(builder, local, edge, S_EDGE_BITS, 5);
+
+        builder.assert_zero(output - poseidon_out);
+        builder.assert_zero(poseidon.inputs[0] - batch - phase * (poly - batch));
+        builder.assert_zero((phase - F::ONE) * (poseidon.inputs[2] - f(POSEIDON_TAG_EVENT_BATCH)));
+        builder.assert_zero((phase - F::ONE) * poseidon.inputs[3]);
+        builder.assert_zero((phase - F::ONE) * poseidon.inputs[4]);
+        builder.assert_zero((phase - F::ONE) * poseidon.inputs[5]);
+        builder.assert_zero((phase - F::ONE) * poseidon.inputs[6]);
+        builder.assert_zero((phase - F::ONE) * (poseidon.inputs[7] - f(3)));
+        builder.assert_zero(phase * (poseidon.inputs[1] - ax - f(180_000_000)));
+        builder.assert_zero(phase * (poseidon.inputs[2] - ay - f(90_000_000)));
+        builder.assert_zero(phase * (poseidon.inputs[3] - f(POSEIDON_TAG_POLYGON)));
+        builder.assert_zero(phase * poseidon.inputs[4]);
+        builder.assert_zero(phase * poseidon.inputs[5]);
+        builder.assert_zero(phase * poseidon.inputs[6]);
+        builder.assert_zero(phase * (poseidon.inputs[7] - f(4)));
+        builder.assert_zero((phase - F::ONE) * edge_zero * (poly - f(POSEIDON_TAG_POLYGON)));
+
+        let ay_gt = s_compare(builder, local, 0, ay, py);
+        let by_gt = s_compare(builder, local, 1, by, py);
+        let ax_gt = s_compare(builder, local, 2, ax, px);
+        let bx_gt = s_compare(builder, local, 3, bx, px);
+        let ay_eq = s_eq(builder, ay, py, local[S_AY_EQ], local[S_AY_INV]);
+        let by_eq = s_eq(builder, by, py, local[S_BY_EQ], local[S_BY_INV]);
+        let ax_eq = s_eq(builder, ax, px, local[S_AX_EQ], local[S_AX_INV]);
+        let bx_eq = s_eq(builder, bx, px, local[S_BX_EQ], local[S_BX_INV]);
+        let dy_zero = s_eq(builder, by, ay, local[S_DY_ZERO], local[S_DY_INV]);
+        let orient = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+        let mag = local[S_OMAG];
+        let ozero = local[S_OZERO];
+        let opos = local[S_OPOS];
+        s_bool(builder, ozero);
+        s_bool(builder, opos);
+        s_range(builder, local, mag, S_ORIENT_BITS, C1_ORIENT_BITS);
+        builder.assert_zero(orient - (opos * f(2) - F::ONE) * mag);
+        builder.assert_zero(mag * local[S_OMAG_INV] + ozero - F::ONE);
+        let straddle = ay_gt + by_gt - ay_gt * by_gt * f(2);
+        let direction = (opos - F::ONE) * (by_gt - F::ONE) + opos * by_gt;
+        builder.assert_zero((phase - F::ONE) * (cross - straddle.clone() * direction));
+        let y_closed = local[S_Y_CLOSED];
+        let x_closed = local[S_X_CLOSED];
+        s_bool(builder, y_closed);
+        s_bool(builder, x_closed);
+        builder.assert_zero(
+            y_closed - ((straddle - F::ONE) * (ay_eq - F::ONE) * (by_eq - F::ONE) + F::ONE),
+        );
+        let x_straddle = ax_gt + bx_gt - ax_gt * bx_gt * f(2);
+        builder.assert_zero(
+            x_closed - ((x_straddle - F::ONE) * (ax_eq - F::ONE) * (bx_eq - F::ONE) + F::ONE),
+        );
+        builder.assert_zero(
+            (phase - F::ONE) * ozero * y_closed * (dy_zero - (dy_zero - F::ONE) * x_closed),
+        );
+
+        let lat_select = s_eq(builder, edge, f(10), local[S_LAT_SELECT], local[S_LAT_INV]);
+        let lon_select = s_eq(builder, edge, f(11), local[S_LON_SELECT], local[S_LON_INV]);
+        builder.assert_zero(
+            (phase - F::ONE) * real * lat_select * (poseidon.inputs[1] - py - f(90_000_000)),
+        );
+        builder.assert_zero(
+            (phase - F::ONE) * real * lon_select * (poseidon.inputs[1] - px - f(180_000_000)),
+        );
+
+        {
+            let mut first = builder.when_first_row();
+            first.assert_zero(phase);
+            first.assert_zero(edge);
+            first.assert_one(edge_zero);
+            first.assert_one(real);
+            first.assert_eq(remaining, f((self.events * MAX_POLYGON_VERTICES) as u64));
+            first.assert_eq(batch, f(POSEIDON_TAG_EVENT_BATCH));
+            first.assert_eq(poly, f(POSEIDON_TAG_POLYGON));
+            first.assert_zero(parity);
+            first.assert_eq(fx, ax);
+            first.assert_eq(fy, ay);
+        }
+        {
+            let mut transition = builder.when_transition();
+            transition.assert_zero(next[S_PHASE] + phase - F::ONE);
+            transition.assert_eq(next[S_FX], fx);
+            transition.assert_eq(next[S_FY], fy);
+            transition.assert_zero((phase - F::ONE) * (next[S_EDGE] - edge));
+            transition.assert_zero(
+                phase * (next[S_EDGE] - edge - F::ONE + last * f(MAX_POLYGON_VERTICES as u64)),
+            );
+            transition.assert_zero((phase - F::ONE) * (next[S_REAL] - real));
+            transition.assert_zero(phase * next[S_REAL] * (real - F::ONE));
+            transition.assert_zero((phase - F::ONE) * (next[S_REMAINING] - remaining));
+            transition.assert_zero(phase * (next[S_REMAINING] - remaining + real));
+            transition.assert_zero((phase - F::ONE) * (next[S_BATCH_STATE] - output));
+            transition.assert_zero(phase * (next[S_BATCH_STATE] - batch));
+            transition.assert_zero((phase - F::ONE) * (next[S_POLY_STATE] - poly));
+            transition.assert_zero(phase * (last - F::ONE) * (next[S_POLY_STATE] - output));
+            transition.assert_zero(phase * last * (next[S_POLY_STATE] - f(POSEIDON_TAG_POLYGON)));
+            transition.assert_zero((phase - F::ONE) * (next[S_PX] - px));
+            transition.assert_zero((phase - F::ONE) * (next[S_PY] - py));
+            transition.assert_zero((phase - F::ONE) * (next[S_AX] - ax));
+            transition.assert_zero((phase - F::ONE) * (next[S_AY] - ay));
+            transition.assert_zero(phase * (last - F::ONE) * (next[S_PX] - px));
+            transition.assert_zero(phase * (last - F::ONE) * (next[S_PY] - py));
+            transition.assert_zero(phase * (last - F::ONE) * (next[S_AX] - bx));
+            transition.assert_zero(phase * (last - F::ONE) * (next[S_AY] - by));
+            let updated = parity + cross - parity * cross * f(2);
+            transition.assert_zero((phase - F::ONE) * (next[S_PARITY] - updated));
+            transition.assert_zero(phase * (last - F::ONE) * (next[S_PARITY] - parity));
+            transition.assert_zero(phase * last * next[S_PARITY]);
+        }
+        builder.assert_zero((phase - F::ONE) * edge_zero * parity);
+        builder.assert_zero(phase * last * (bx - fx));
+        builder.assert_zero(phase * last * (by - fy));
+        builder.assert_zero(phase * last * (output - polygon_root));
+        builder.assert_zero(phase * last * parity);
+        {
+            let mut last_row = builder.when_last_row();
+            last_row.assert_one(phase);
+            last_row.assert_one(last);
+            last_row.assert_eq(remaining, real);
+            last_row.assert_eq(batch, event_root);
+            last_row.assert_zero(parity);
+        }
+        let _ = next_poseidon;
+    }
+}
+
+fn s_bool<AB: AirBuilder<F = F>>(builder: &mut AB, value: AB::Var) {
+    builder.assert_zero(value * (value - F::ONE));
+}
+fn s_range<AB: AirBuilder<F = F>>(
+    builder: &mut AB,
+    row: &[AB::Var],
+    value: AB::Var,
+    start: usize,
+    bits: usize,
+) {
+    let mut result = AB::Expr::ZERO;
+    for bit in 0..bits {
+        s_bool(builder, row[start + bit]);
+        result += row[start + bit] * f(1u64 << bit);
+    }
+    builder.assert_eq(value, result);
+}
+fn s_eq<AB: AirBuilder<F = F>>(
+    builder: &mut AB,
+    left: AB::Var,
+    right: impl Into<AB::Expr>,
+    equal: AB::Var,
+    inverse: AB::Var,
+) -> AB::Var {
+    let difference = left - right.into();
+    s_bool(builder, equal);
+    builder.assert_zero(equal * difference.clone());
+    builder.assert_zero(difference * inverse + equal - F::ONE);
+    equal
+}
+fn s_compare<AB: AirBuilder<F = F>>(
+    builder: &mut AB,
+    row: &[AB::Var],
+    index: usize,
+    left: AB::Var,
+    right: AB::Var,
+) -> AB::Var {
+    let start = S_COMPARE_START + index * S_COMPARE_WIDTH;
+    let greater = row[start];
+    let gd = row[start + 1];
+    let od = row[start + 2];
+    s_bool(builder, greater);
+    s_range(builder, row, gd, start + 3, C1_COMPARE_BITS);
+    s_range(
+        builder,
+        row,
+        od,
+        start + 3 + C1_COMPARE_BITS,
+        C1_COMPARE_BITS,
+    );
+    builder.assert_zero(greater * (left - right - F::ONE - gd));
+    builder.assert_zero((greater - F::ONE) * (right - left - od));
+    greater
 }
 
 fn prove_c3(lot: &SyntheticLot, events: usize) -> Result<ProofStats> {
@@ -1073,7 +1745,7 @@ fn eval_poseidon2_full_round<AB: AirBuilder<F = F>>(
 ) {
     for (i, (s, r)) in state.iter_mut().zip(round_constants.iter()).enumerate() {
         *s += r.dup();
-        eval_poseidon2_sbox::<AB>(&full_round.sbox[i], s);
+        eval_poseidon2_sbox::<AB>(&full_round.sbox[i], s, builder);
     }
     GenericPoseidon2LinearLayersGoldilocks::external_linear_layer(state);
     for (state_i, post_i) in state.iter_mut().zip(full_round.post) {
@@ -1089,17 +1761,26 @@ fn eval_poseidon2_partial_round<AB: AirBuilder<F = F>>(
     builder: &mut AB,
 ) {
     state[0] += round_constant.dup();
-    eval_poseidon2_sbox::<AB>(&partial_round.sbox, &mut state[0]);
+    eval_poseidon2_sbox::<AB>(&partial_round.sbox, &mut state[0], builder);
     builder.assert_eq(state[0].dup(), partial_round.post_sbox);
     state[0] = partial_round.post_sbox.into();
     GenericPoseidon2LinearLayersGoldilocks::internal_linear_layer(state);
 }
 
 fn eval_poseidon2_sbox<AB: AirBuilder<F = F>>(
-    _sbox: &SBox<AB::Var, GOLDILOCKS_SBOX_DEGREE, SBOX_REGISTERS>,
+    sbox: &SBox<AB::Var, GOLDILOCKS_SBOX_DEGREE, SBOX_REGISTERS>,
     x: &mut AB::Expr,
+    builder: &mut AB,
 ) {
-    *x = x.exp_const_u64::<GOLDILOCKS_SBOX_DEGREE>();
+    match (GOLDILOCKS_SBOX_DEGREE, SBOX_REGISTERS) {
+        (7, 1) => {
+            let committed_x3 = sbox.0[0].into();
+            builder.assert_eq(committed_x3.dup(), x.cube());
+            *x = committed_x3.square() * x.dup();
+        }
+        (7, 0) => *x = x.exp_const_u64::<7>(),
+        _ => unreachable!("unsupported Poseidon2 S-box configuration"),
+    }
 }
 
 fn prove_c4(lot: &SyntheticLot) -> Result<ProofStats> {
@@ -1880,6 +2561,96 @@ mod tests {
         assert_ne!(pis[0], f(lot.secret));
         assert_ne!(pis[1], f(lot.secret));
         Ok(())
+    }
+
+    #[test]
+    fn c1_valid_outside_polygon_passes() -> Result<()> {
+        let profile = Profile::CoffeeSmall;
+        let lot = synthetic_lot(6, 8, profile);
+        let template = build_template(CircuitKind::C1, 8, profile)?;
+        prove_and_verify(&template, &lot, 6, profile)?;
+        Ok(())
+    }
+
+    #[test]
+    fn c1_inside_polygon_and_boundary_fail() -> Result<()> {
+        let profile = Profile::CoffeeSmall;
+        let inside = crate::synthetic::inside_forbidden_lot(6, 8, profile);
+        let template = build_template(CircuitKind::C1, 8, profile)?;
+        assert!(prove_and_verify(&template, &inside, 6, profile).is_err());
+
+        let mut boundary = synthetic_lot(6, 8, profile);
+        let vertex = boundary.polygon.vertices()[0];
+        boundary.coords[0] = vertex;
+        boundary.events[0].latitude_e6 = vertex.latitude_e6;
+        boundary.events[0].longitude_e6 = vertex.longitude_e6;
+        assert!(prove_and_verify(&template, &boundary, 6, profile).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn c1_concave_polygon_respects_the_notch() -> Result<()> {
+        let profile = Profile::CoffeeSmall;
+        let template = build_template(CircuitKind::C1, 8, profile)?;
+        let mut lot = synthetic_lot(6, 8, profile);
+        lot.polygon = SimplePolygon::new(vec![
+            PointE6::new(0, 0),
+            PointE6::new(10, 0),
+            PointE6::new(10, 10),
+            PointE6::new(5, 5),
+            PointE6::new(0, 10),
+        ])?;
+        for (coord, event) in lot.coords.iter_mut().zip(lot.events.iter_mut()) {
+            *coord = PointE6::new(5, 8);
+            event.latitude_e6 = coord.latitude_e6;
+            event.longitude_e6 = coord.longitude_e6;
+        }
+        prove_and_verify(&template, &lot, 6, profile)?;
+
+        lot.coords[0] = PointE6::new(2, 2);
+        lot.events[0].latitude_e6 = 2;
+        lot.events[0].longitude_e6 = 2;
+        assert!(prove_and_verify(&template, &lot, 6, profile).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn c1_wrong_public_commitment_fails() -> Result<()> {
+        let profile = Profile::CoffeeSmall;
+        let lot = synthetic_lot(6, 8, profile);
+        for commitment in 0..2 {
+            let (trace, mut pis) = c1_serial_trace_and_pis(&lot, 8)?;
+            pis[commitment] += F::ONE;
+            assert!(prove_stark(
+                &C1SerialAir {
+                    events: 8,
+                    level: usize::MAX,
+                },
+                trace,
+                &pis,
+            )
+            .is_err());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn c1_constraint_degree_fits_the_fixed_fri_configuration() {
+        use p3_air::symbolic::{get_max_constraint_degree, AirLayout};
+
+        let serial = C1SerialAir {
+            events: 8,
+            level: usize::MAX,
+        };
+        let c2 = C2MerkleAir;
+        let fixed_fri_limit = (1 << FRI_LOG_BLOWUP) + 1;
+        assert!(
+            get_max_constraint_degree::<F, _>(&serial, AirLayout::from_air(&serial))
+                <= fixed_fri_limit
+        );
+        assert!(
+            get_max_constraint_degree::<F, _>(&c2, AirLayout::from_air(&c2)) <= fixed_fri_limit
+        );
     }
 
     #[cfg(feature = "recursion")]

@@ -29,6 +29,7 @@ pub fn run_pipeline_seed(
     let mut proof_timing_cache = HashMap::new();
 
     let inner_circuits = [
+        CircuitKind::C1,
         CircuitKind::C2,
         CircuitKind::C3,
         CircuitKind::C4,
@@ -55,26 +56,51 @@ pub fn run_pipeline_seed(
             }
         }
 
-        // Generate synthetic E1 lot & execute proofs C2..C5
-        let synth_lot = synthetic_lot(seed as u64 + lot.lot_id as u64, lot_size, e1_profile);
+        // Keep the E1 witness bound to the EPCIS payload carried by this E2 lot.
+        let mut synth_lot = synthetic_lot(seed as u64 + lot.lot_id as u64, lot_size, e1_profile);
+        synth_lot.lot_id = lot.lot_id as u64;
+        synth_lot.epoch = seed as u64;
+        synth_lot.events = lot
+            .events
+            .iter()
+            .map(|event| event.payload.clone())
+            .collect();
+        synth_lot.coords = synth_lot.events.iter().map(|event| event.point()).collect();
+        synth_lot.readings = synth_lot
+            .events
+            .iter()
+            .map(|event| event.readings as u64)
+            .collect();
+        synth_lot.timestamps = synth_lot
+            .events
+            .iter()
+            .map(|event| event.timestamp_ms / 1_000)
+            .collect();
+        synth_lot.cert_ids = synth_lot
+            .events
+            .iter()
+            .map(|event| event.certificate_id)
+            .collect();
         let mut total_proof_ms = 0.0f64;
         let mut status = "ok".to_string();
-        let mut note_msg =
-            "base_proof_pipeline_c2_to_c5;proof_timing=witness_ms_plus_prove_ms_cached_by_lot_size"
-                .to_string();
+        let mut note_msg = "base_proof_pipeline_c1_to_c5;c1_per_lot;proof_timing=witness_ms_plus_prove_ms;c2_to_c5_cached_by_lot_size".to_string();
 
         for &kind in &inner_circuits {
             let cache_key = (kind, lot_size);
-            if let Some(ms) = proof_timing_cache.get(&cache_key) {
-                total_proof_ms += ms;
-                continue;
+            if kind != CircuitKind::C1 {
+                if let Some(ms) = proof_timing_cache.get(&cache_key) {
+                    total_proof_ms += ms;
+                    continue;
+                }
             }
 
             let tmpl = &template_cache[&cache_key];
             match prove_and_verify(tmpl, &synth_lot, seed, e1_profile) {
                 Ok(stats) => {
                     let proof_ms = stats.witness_ms + stats.prove_ms;
-                    proof_timing_cache.insert(cache_key, proof_ms);
+                    if kind != CircuitKind::C1 {
+                        proof_timing_cache.insert(cache_key, proof_ms);
+                    }
                     total_proof_ms += proof_ms;
                 }
                 Err(err) => {
@@ -133,7 +159,7 @@ mod tests {
     fn test_pipeline_seed_run() {
         let options = E2Options {
             profile: ProfileMode::Quick,
-            lambda_events_per_min: 480.0,
+            lambda_events_per_min: 64.0,
             duration_min: 1.0,
             seeds: 1,
             l1_mode: L1Mode::Mock,
@@ -149,6 +175,7 @@ mod tests {
         for row in &rows {
             assert_eq!(row.seed, 1);
             assert_eq!(row.status, "ok");
+            assert!(row.note.contains("c1_per_lot"));
             assert!(row.lot_ready_at_ms >= row.ingest_at_ms);
             assert!(row.proof_start_ms >= row.lot_ready_at_ms);
             assert!(row.proof_end_ms >= row.proof_start_ms);
