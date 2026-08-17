@@ -1,5 +1,8 @@
-use e1_bench::epcis::{EpcisEventV1, PointE6, SimplePolygon, EPCIS_EVENT_V1_BYTES};
+use e1_bench::epcis::{
+    EpcisEventV1, PointE6, SignedEpcisEventV1, SimplePolygon, EPCIS_EVENT_V1_BYTES,
+};
 use e1_bench::{synthetic::synthetic_lot, Profile};
+use ed25519_dalek::SigningKey;
 
 fn event() -> EpcisEventV1 {
     EpcisEventV1 {
@@ -88,4 +91,36 @@ fn synthetic_lot_uses_canonical_epcis_events() {
             *event
         );
     }
+}
+
+#[test]
+fn synthetic_lot_signs_every_canonical_epcis_event() {
+    let lot = synthetic_lot(9, 8, Profile::CoffeeSmall);
+    assert_eq!(lot.signatures.len(), lot.events.len());
+    for (event, signature) in lot.events.iter().zip(&lot.signatures) {
+        SignedEpcisEventV1 {
+            event: event.clone(),
+            signature: *signature,
+        }
+        .verify()
+        .unwrap();
+    }
+}
+
+#[test]
+fn signed_event_binds_the_exact_canonical_payload_and_actor_key() {
+    let signing_key = SigningKey::from_bytes(&[0x42; 32]);
+    let mut event = event();
+    event.actor_public_key = signing_key.verifying_key().to_bytes();
+    let signed = SignedEpcisEventV1::sign(event, &signing_key);
+
+    signed.verify().unwrap();
+
+    let mut changed_payload = signed.clone();
+    changed_payload.event.readings += 1;
+    assert!(changed_payload.verify().is_err());
+
+    let mut changed_key = signed;
+    changed_key.event.actor_public_key[0] ^= 1;
+    assert!(changed_key.verify().is_err());
 }

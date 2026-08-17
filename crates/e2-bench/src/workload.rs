@@ -1,4 +1,5 @@
-use e1_bench::epcis::EpcisEventV1;
+use e1_bench::epcis::{EpcisEventV1, SignedEpcisEventV1};
+use ed25519_dalek::SigningKey;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use rand_distr::{Distribution, Normal};
@@ -8,6 +9,7 @@ pub struct EpcisEvent {
     pub event_id: usize,
     pub ingest_at_ms: u64,
     pub payload: EpcisEventV1,
+    pub signature: [u8; 64],
 }
 
 #[derive(Clone, Debug)]
@@ -46,24 +48,25 @@ pub fn generate_poisson_event_stream(
             break;
         }
 
-        let mut actor_public_key = [0u8; 32];
-        actor_public_key[..8].copy_from_slice(&seed.to_be_bytes());
-        actor_public_key[8..16].copy_from_slice(&(event_id as u64).to_be_bytes());
+        let signing_key = fixture_signing_key(seed, event_id);
+        let actor_public_key = signing_key.verifying_key().to_bytes();
+        let payload = EpcisEventV1 {
+            event_id: event_id as u64,
+            lot_id: 0,
+            epoch_id: seed,
+            timestamp_ms: 1_700_000_000_000 + event_id as u64 * 15_000,
+            readings: 100 + (event_id % 801) as u32,
+            latitude_e6: 10_830_000 + (event_id % 10_000) as i32,
+            longitude_e6: 106_760_000 + (event_id % 10_000) as i32,
+            certificate_id: 10_000_000 + event_id as u64,
+            role: 4,
+            actor_public_key,
+        };
         events.push(EpcisEvent {
             event_id,
             ingest_at_ms: current_time_ms,
-            payload: EpcisEventV1 {
-                event_id: event_id as u64,
-                lot_id: 0,
-                epoch_id: seed,
-                timestamp_ms: 1_700_000_000_000 + event_id as u64 * 15_000,
-                readings: 100 + (event_id % 801) as u32,
-                latitude_e6: 10_830_000 + (event_id % 10_000) as i32,
-                longitude_e6: 106_760_000 + (event_id % 10_000) as i32,
-                certificate_id: 10_000_000 + event_id as u64,
-                role: 4,
-                actor_public_key,
-            },
+            signature: SignedEpcisEventV1::sign(payload.clone(), &signing_key).signature,
+            payload,
         });
         event_id += 1;
     }
@@ -107,6 +110,10 @@ pub fn accumulate_lots(events: &[EpcisEvent], seed: u64) -> Vec<Lot> {
         for event in &mut lot_events {
             event.payload.lot_id = lot_id as u64;
             event.payload.epoch_id = seed;
+            let signing_key = fixture_signing_key(seed, event.event_id);
+            event.payload.actor_public_key = signing_key.verifying_key().to_bytes();
+            event.signature =
+                SignedEpcisEventV1::sign(event.payload.clone(), &signing_key).signature;
         }
 
         // Lot ready time is the ingestion timestamp of the last event in this lot
@@ -123,6 +130,13 @@ pub fn accumulate_lots(events: &[EpcisEvent], seed: u64) -> Vec<Lot> {
     }
 
     lots
+}
+
+fn fixture_signing_key(seed: u64, event_id: usize) -> SigningKey {
+    let mut rng = ChaCha20Rng::seed_from_u64(seed ^ (event_id as u64).wrapping_mul(0x9E37_79B9));
+    let mut secret_key = [0u8; 32];
+    rng.fill(&mut secret_key);
+    SigningKey::from_bytes(&secret_key)
 }
 
 #[cfg(test)]
@@ -171,6 +185,22 @@ mod tests {
                     .unwrap(),
                     event.payload
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn lots_reseal_ed25519_signatures_after_assigning_lot_ids() {
+        let stream = generate_poisson_event_stream(91, 480.0, 1.0);
+        let lots = accumulate_lots(&stream, 91);
+        for lot in lots {
+            for event in lot.events {
+                e1_bench::epcis::SignedEpcisEventV1 {
+                    event: event.payload,
+                    signature: event.signature,
+                }
+                .verify()
+                .unwrap();
             }
         }
     }
