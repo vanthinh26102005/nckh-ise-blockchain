@@ -1,5 +1,7 @@
 # Báo cáo Tuần 2 — E1 Cryptographic Benchmark
 
+> Tài liệu lịch sử của tuần 2. Các nhận định về revision `524665d` và wrapper bị chặn không mô tả artifact hiện tại; xem `docs/reports/e1_teacher_report.md` để biết trạng thái mới.
+
 **Người viết**: Nhân
 **Ngày**: 07/06/2026
 **Phạm vi**: 01/06/2026 – 07/06/2026
@@ -132,7 +134,7 @@ Wrapper dùng `p3-recursion` (rev `524665d`) bị **upstream panic** trong aggre
 1. **Unblock Wrapper**: Theo dõi upstream `Plonky3-recursion`; thử rev mới khi có bản ổn định.
 2. **Cải thiện C4**: Nghiên cứu chiến lược EdDSA khả thi (BabyJubJub, Ristretto, hoặc field-native scheme).
 3. **Mở rộng benchmark**: Tăng seeds, mở rộng event grid nếu runtime cho phép.
-4. **Căn chỉnh paper claims**: Đảm bảo mọi số liệu trong draft paper tham chiếu `results/e1/raw.csv`, không dùng estimate.
+4. **Căn chỉnh paper claims**: Đảm bảo mọi số liệu trong draft paper tham chiếu `results/e1/archive/strict-2026-06-21/e1_raw.csv`, không dùng estimate.
 
 ---
 
@@ -140,10 +142,10 @@ Wrapper dùng `p3-recursion` (rev `524665d`) bị **upstream panic** trong aggre
 
 | Tài liệu | Đường dẫn |
 |---------|-----------|
-| Giải thích kỹ thuật C2 + C5 | `E1-Ngo_Van_Thinh/docs/04-merkle-nullifier-basics.md` |
-| Lý do thiết kế tuần 2 | `E1-Ngo_Van_Thinh/docs/05-week2-design-rationale.md` |
-| Báo cáo tuần 1 | `reports/e1_teacher_report.md` |
-| Raw benchmark CSV | `results/e1_raw.csv` (480 rows) |
-| Summary table CSV | `results/e1_table1.csv` |
-| Auto-generated report | `results/e1_report.md` |
-| Benchmark metadata | `results/e1_metadata.json` |
+| Giải thích kỹ thuật C2 + C5 | `docs/research/e1/04-merkle-nullifier-basics.md` |
+| Lý do thiết kế tuần 2 | `docs/research/e1/05-week2-design-rationale.md` |
+| Báo cáo tuần 1 | `docs/reports/e1_teacher_report.md` |
+| Raw benchmark CSV | `results/e1/archive/strict-2026-06-21/e1_raw.csv` (480 rows) |
+| Summary table CSV | `results/e1/archive/strict-2026-06-21/e1_table1.csv` |
+| Auto-generated report | `results/e1/archive/strict-2026-06-21/e1_report.md` |
+| Benchmark metadata | `results/e1/archive/strict-2026-06-21/e1_metadata.json` |

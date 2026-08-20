@@ -1,7 +1,9 @@
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 
 pub const EPCIS_EVENT_VERSION: u8 = 1;
 pub const EPCIS_EVENT_V1_BYTES: usize = 86;
+pub const ED25519_SIGNATURE_BYTES: usize = 64;
 pub const MAX_POLYGON_VERTICES: usize = 32;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -162,6 +164,29 @@ impl EpcisEventV1 {
         };
         event.validate()?;
         Ok(event)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SignedEpcisEventV1 {
+    pub event: EpcisEventV1,
+    pub signature: [u8; ED25519_SIGNATURE_BYTES],
+}
+
+impl SignedEpcisEventV1 {
+    /// Signs the fixed canonical payload; the signature is deliberately not part of that payload.
+    pub fn sign(event: EpcisEventV1, signing_key: &SigningKey) -> Self {
+        let signature = signing_key.sign(&event.canonical_bytes()).to_bytes();
+        Self { event, signature }
+    }
+
+    pub fn verify(&self) -> Result<()> {
+        let public_key = VerifyingKey::from_bytes(&self.event.actor_public_key)
+            .map_err(|err| anyhow!("invalid Ed25519 actor public key: {err}"))?;
+        let signature = Signature::from_bytes(&self.signature);
+        public_key
+            .verify_strict(&self.event.canonical_bytes(), &signature)
+            .map_err(|err| anyhow!("invalid Ed25519 EPCIS event signature: {err}"))
     }
 }
 

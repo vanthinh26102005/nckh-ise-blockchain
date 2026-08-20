@@ -15,9 +15,9 @@
 
 - **Hardware**: Workstation 16-core (AMD Ryzen 9 5950X hoặc tương đương), 32 GB RAM, ổ NVMe SSD ≥ 1 TB (Nếu cần GPU thì vẫn có thể dùng A100 của UIT).
 - **Hệ điều hành**: Ubuntu 22.04 LTS.
-- **Ngôn ngữ & runtime**: Rust 1.78+ (cho Plonky2), Go 1.22 (cho Fabric chaincode), Python 3.11 (cho phân tích).
-- **Thư viện chính**: `plonky2` (rev mainnet stable), `hyperledger-fabric` 2.5, `web3.py` 6.x, `ethers.js` 6.x, `pandas`, `scipy.stats`, `matplotlib`.
-- **Blockchain**: Ethereum Sepolia testnet cho L1; mạng Fabric 3 orderer (Raft) cho L0.
+- **Ngôn ngữ & runtime**: Rust 1.78+ (Plonky3 artifact), Go 1.22 (dự kiến Fabric Gateway), Python 3.11 (phân tích).
+- **Thư viện chính hiện có**: Plonky3 `0.6`, Plonky3-recursion revision `b363397`, `ed25519-dalek` cho fixture/host đối chiếu, `pandas`, `scipy.stats`, `matplotlib`.
+- **Blockchain hiện có**: chưa có Solidity verifier, Anvil RPC transaction hoặc Fabric topology trong artifact. Sepolia/Fabric trong paper là mục tiêu triển khai, không phải số liệu đã đo.
 
 ## 3. Bộ dữ liệu
 
@@ -32,17 +32,17 @@
 ### E1 — Cryptographic benchmark (RQ1)
 - **Biến độc lập**: events/lot ∈ {8, 16, 32, 64}.
 - **Biến phụ thuộc**: prove time (s), verify time (ms), proof size (B), peak RAM (GB).
-- **Seed**: ≥ 30 seed/cell, đo riêng từng sub-circuit C1–C5 và wrapper.
+- **Seed mục tiêu**: ≥ 30 seed/cell, đo riêng C1–C5 và wrapper sau khi wrapper được đưa vào benchmark runner; hiện đã có Rust proof/verify smoke cho C1–C5 nhưng chưa có benchmark grid mới.
 - **Output**: Table 1 trong paper + 4 line plots (events/lot trục X).
 
 ### E2 — End-to-end latency (RQ2)
 - **Workload**: $\lambda = 480$ event/phút trong 60 phút × 30 seed.
-- **Đo**: thời gian từ EPCIS ingestion đến khi epoch proof được confirm trên Sepolia.
+- **Đo mục tiêu**: thời gian từ Fabric acknowledgement đến khi epoch proof được confirm trên Anvil. Bản benchmark hiện tại chỉ có EPCIS workload và L1 simulation, nên không dùng để claim metric này.
 - **Báo cáo**: median, p95, p99, histogram + CDF.
 
 ### E3 — Baseline comparison (RQ3)
 - 4 hệ thống chạy song song trên cùng workload 1 giờ (lambda = 480).
-- **Metrics**: throughput (lot/phút), byte/shipment on-chain, audit latency, chi phí USD (gas price Sepolia × 1; gas → mainnet quy đổi ETH 3000 USD).
+- **Metrics mục tiêu**: throughput (lot/phút), byte/shipment on-chain, audit latency và gas đo từ receipt Anvil; không điền giá trị ước lượng vào paper.
 - **Kiểm định thống kê**: paired Wilcoxon signed-rank, $\alpha = 0.05$, hiệu chỉnh Bonferroni cho 6 cặp so sánh.
 
 ### E4 — Scalability and policy (RQ4)
@@ -58,16 +58,16 @@
 
 ## 6. Quy trình tái lập
 1. `git clone` repo + checkout tag được khai báo trong artifact.
-2. `make bootstrap` cài Rust, Go, Python deps.
-3. `make e1`, `make e2`, `make e3`, `make e4` chạy 4 thí nghiệm; raw output vào `results/`.
-4. `make figs` sinh hình và bảng cho paper từ raw output.
-5. Tổng thời gian dự kiến: ~36 giờ wall-clock trên cấu hình tham chiếu.
+2. `make bootstrap` cài Rust/Python deps hiện có.
+3. `make e1` và `make e2-quick` chạy các prototype hiện tại; raw output vào `results/`.
+4. Paper revision hiện tại có thể báo cáo prototype Rust/E2 simulation với scope và giới hạn rõ ràng.
+5. Chỉ bổ sung settlement/Fabric claims khi direct verifier, Fabric acknowledgement và Anvil receipt smoke pass; không ghi số liệu chưa đo.
 
 ## 7. Thời hạn submit: 31/08/2026
 
 
 
 ## 8. Rủi ro và phương án giảm thiểu
-- **R1**: Plonky2 prover memory > 64 GB ở N_p = 2000. → Giảm batch size, tăng số epoch.
-- **R2**: Sepolia tắc nghẽn ảnh hưởng E2. → Đo trên local Anvil; báo cáo cả 2.
+- **R1**: recursive prover memory > 64 GB ở batch lớn. → Giảm batch size, tăng số epoch và ghi peak RSS đo thật.
+- **R2**: chưa có direct Solidity verifier/Fabric integration. → Báo cáo E2 như prototype simulation; để settlement latency/Fabric throughput ở phần future work.
 - **R3**: Fabric baseline crash do peer overload. → Tăng số orderer lên 5; cap workload ở lambda = 480.

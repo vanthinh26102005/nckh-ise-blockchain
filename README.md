@@ -2,6 +2,13 @@
 
 MVP benchmark cho E1 trong hướng nghiên cứu "EPCIS-Aware Recursive ZK-Rollup for EUDR Traceability".
 
+## Repository Layout
+
+- `crates/`: Rust workspaces for E1 and E2.
+- `docs/`: research documents, reports, stage submissions, and references; see `docs/README.md`.
+- `results/`: benchmark outputs grouped by experiment and run kind; see `results/README.md`.
+- `scripts/`: bootstrap and result-analysis scripts.
+
 ## E1 Cryptographic Benchmark
 
 ### Setup
@@ -10,7 +17,7 @@ MVP benchmark cho E1 trong hướng nghiên cứu "EPCIS-Aware Recursive ZK-Roll
 make bootstrap
 ```
 
-`make bootstrap` cài `rustup` nếu thiếu. E1 hiện dùng Plonky3 core cho base proofs. Phase 7 đã pin Plonky3-recursion GitHub rev `524665d`, nhưng wrapper recursive vẫn là research blocker vì upstream rev này panic trong aggregation path; không emit mocked proof.
+`make bootstrap` cài `rustup` nếu thiếu. E1 dùng Plonky3 core `0.6` cho base proofs và Plonky3-recursion revision `b363397` cho wrapper. Với `--features recursion`, wrapper đã prove/verify thật C1–C5 trong cấu hình Goldilocks/Poseidon2/FRI hiện tại. Đây vẫn là research artifact: C4 bên trong proof là Poseidon2 actor-authorization statement, chưa phải Ed25519 AIR.
 
 ### Smoke test
 
@@ -21,11 +28,11 @@ make e1-quick
 
 `make e1-quick` chạy smoke base Plonky3 C1-C5 với `events/lot = 8`, `seed = 1`:
 
-- `results/e1_raw.csv`
-- `results/e1_table1.csv`
-- `results/e1_plots.png`
-- `results/e1_metadata.json`
-- `results/e1_report.md`
+- `results/e1/quick/raw.csv`
+- `results/e1/quick/summary.csv`
+- `results/e1/quick/plots.png`
+- `results/e1/quick/metadata.json`
+- `results/e1/quick/report.md`
 
 ### Full MVP run
 
@@ -33,7 +40,7 @@ make e1-quick
 make e1
 ```
 
-Lệnh này giữ output V2 compatibility ở `results/e1/`. Bản strict theo guide chạy bằng:
+Lệnh này ghi output đầy đủ vào `results/e1/full/`. Bản strict theo guide chạy bằng:
 
 ```bash
 make e1-strict
@@ -47,7 +54,7 @@ make e1-strict
 - `c4_poseidon2_actor_authorization`: chứng minh actor authorization bằng Poseidon2 và private actor secret; không claim EdDSA/Ed25519.
 - `c5_poseidon2_sparse_nullifier_depth32`: chứng minh cập nhật sparse nullifier map 32-bit từ `oldRoot` sang `newRoot`; `oldRoot`, `newRoot`, nullifier và trạng thái là public inputs. Việc lưu trạng thái map xuyên các giao dịch sẽ được nối vào E2/Fabric ở PR4.
 
-`wrapper_recursive_plonky3` thử chạy Plonky3-recursion thật khi bật `--features recursion`; nếu upstream panic/fail, row ghi blocker minh bạch và không emit mocked recursive proof.
+`wrapper_recursive_plonky3` chạy Plonky3-recursion thật khi bật `--features recursion` và chỉ ghi kết quả khi prove + recursive verification thành công. Không có mocked proof. Cấu hình wire-format Solidity verifier và contract EVM chưa có trong repository.
 
 Raw CSV strict theo guide:
 
@@ -69,9 +76,15 @@ circuit_version,build_ms,witness_ms,setup_ms,gate_count,public_inputs,inner_prov
 
 ### CLI
 
+Khi chạy CLI trực tiếp, tạo trước thư mục output:
+
+```bash
+mkdir -p results/e1/strict
+```
+
 ```bash
 cargo run --release -p e1-bench -- \
-  --out results/e1_raw.csv \
+  --out results/e1/strict/raw.csv \
   --events 8,16,32,64 \
   --seeds 30 \
   --circuits all \
@@ -86,7 +99,7 @@ Profiles: `coffee-small`, `coffee-default`, `stress`.
 
 - `c1_legacy_bbox`
 
-Không claim `196B`. C4 hiện là Poseidon2 actor authorization proof; Ed25519/EdDSA production verification vẫn là blocker riêng ngoài scope E1 base Plonky3.
+Không claim `196B`. C4 hiện là Poseidon2 actor authorization proof; Ed25519/EdDSA production verification là hướng mở rộng ngoài scope E1 artifact hiện tại.
 
 ## E2 End-to-End Latency Benchmark
 
@@ -100,12 +113,12 @@ make e2-quick
 
 Chạy quick profile: `lambda = 480 events/min`, `duration = 5 min`, `seeds = 3`, `l1-mode = mock`.
 
-Sinh các file output trong `results/e2/`:
-- `results/e2/raw.csv`
-- `results/e2/summary.csv`
-- `results/e2/metadata.json`
-- `results/e2/report.md`
-- `results/e2/cdf.png`
+Sinh các file output trong `results/e2/quick/`:
+- `results/e2/quick/raw.csv`
+- `results/e2/quick/summary.csv`
+- `results/e2/quick/metadata.json`
+- `results/e2/quick/report.md`
+- `results/e2/quick/cdf.png`
 
 ### Full Run (Stage 3 Guide Aligned)
 
@@ -117,6 +130,12 @@ Chạy full workload: `lambda = 480 events/min`, `duration = 60 min`, `seeds = 3
 
 ### CLI Direct Usage
 
+Khi chạy CLI trực tiếp, tạo trước thư mục output tương ứng:
+
+```bash
+mkdir -p results/e2/quick results/e2/strict
+```
+
 ```bash
 cargo run --release -p e2-bench -- \
   --profile quick \
@@ -124,9 +143,9 @@ cargo run --release -p e2-bench -- \
   --duration-min 5 \
   --seeds 3 \
   --l1-mode mock \
-  --out results/e2/raw.csv \
-  --summary-out results/e2/summary.csv \
-  --metadata-out results/e2/metadata.json
+  --out results/e2/quick/raw.csv \
+  --summary-out results/e2/quick/summary.csv \
+  --metadata-out results/e2/quick/metadata.json
 ```
 
 Full run CLI:
@@ -138,13 +157,14 @@ cargo run --release -p e2-bench -- \
   --duration-min 60 \
   --seeds 30 \
   --l1-mode anvil \
-  --out results/e2/raw.csv \
-  --summary-out results/e2/summary.csv \
-  --metadata-out results/e2/metadata.json
+  --out results/e2/strict/raw.csv \
+  --summary-out results/e2/strict/summary.csv \
+  --metadata-out results/e2/strict/metadata.json
 ```
 
 ### Disclaimers & Disclosures
 
 - E2 mang `EpcisEventV1` canonical (86-byte big-endian) trong workload. C1 được prove trên payload của từng lot; C2–C5 vẫn dùng cache timing theo circuit/lot size cho prototype hiện tại, và sẽ bị bỏ trong benchmark thật PR4.
-- Report ghi rõ đây là **base proof pipeline latency**, không claim full recursive rollup latency nếu Plonky3 recursive wrapper vẫn đang blocked.
+- Report ghi rõ đây là **prototype pipeline latency**: C1 được prove theo lot, C2–C5 vẫn dùng cache timing theo circuit/lot size; recursive wrapper chưa nằm trong E2 timing.
 - L1 confirmation hiện là deterministic simulation: `mock` ~12s, `local/anvil` ~1s, `sepolia` ~15s. Chưa submit transaction thật lên Anvil/Sepolia.
+- Fabric Gateway/chaincode và Solidity verifier trực tiếp chưa được implement; vì vậy E2 chưa phải benchmark Fabric → recursive proof → Anvil end-to-end.

@@ -144,7 +144,7 @@ def write_metadata(df, raw_path, out_path, command):
         },
         "plonky3_recursion_crates": {
             "source": "https://github.com/Plonky3/Plonky3-recursion",
-            "rev": "524665d0c2e1d294722c064786ae11dff8d9f33b",
+            "rev": "b36339709a7a67ee9760fb578b3d4339fd983709",
             "status": "research prototype dependency; active development and unaudited",
         },
         "python": platform.python_version(),
@@ -155,7 +155,7 @@ def write_metadata(df, raw_path, out_path, command):
         "ram_backend": ram_backend(),
         "proof_size_policy": "measured Plonky3 STARK proof bytes; 196 bytes is paper target, not claimed",
         "c4_status": "Poseidon2 actor authorization proof; Ed25519/EdDSA production verification remains a separate blocker",
-        "recursion_status": "GitHub Plonky3-recursion rev 524665d is pinned, but wrapper aggregation currently panics with 'trace_next is always present'; no mocked recursive proof is emitted",
+        "recursion_status": "Plonky3-recursion revision b363397 has a real Rust wrapper prove/verify smoke test for C1-C5; Solidity/EVM verification is not implemented",
     }
     with open(out_path, "w") as f:
         json.dump(metadata, f, indent=2)
@@ -171,7 +171,7 @@ def write_report(df, out_path):
         "- Proof size is measured from Plonky3 STARK proofs. The 196B target is not claimed.",
         "- C4 is a Poseidon2 actor authorization proof, not Ed25519/EdDSA production verification.",
         "- Ed25519/EdDSA remains a separate blocker.",
-        "- Recursive aggregation uses pinned Plonky3-recursion as a research prototype dependency; current wrapper blocker is upstream panic `trace_next is always present`, and no mocked proof is emitted.",
+        "- Recursive aggregation uses Plonky3-recursion revision b363397 and has a real Rust C1-C5 prove/verify smoke test; Solidity/EVM verification is not implemented.",
         "",
         "| Circuit | Rows | Mean prove s | Mean verify ms | Mean proof bytes | Target gap bytes |",
         "|---|---:|---:|---:|---:|---:|",

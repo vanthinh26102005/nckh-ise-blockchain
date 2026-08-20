@@ -1,5 +1,7 @@
 # 05 — Week 2 Design Rationale: Tại sao C2/C5 trước C4 và Recursive Wrapper
 
+> Tài liệu lịch sử của tuần 2. Các nhận định về revision `524665d` và wrapper bị chặn phản ánh trạng thái trước migration; trạng thái hiện tại được ghi trong `docs/reports/e1_teacher_report.md`.
+
 > Tài liệu này giải thích các quyết định thiết kế tuần 2 của E1: thứ tự ưu tiên circuit, lý do chọn Poseidon2 thay EdDSA, và thiết kế recursive wrapper.
 
 ---

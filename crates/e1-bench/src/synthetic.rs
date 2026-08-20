@@ -1,5 +1,6 @@
-use crate::epcis::{EpcisEventV1, PointE6, SimplePolygon};
+use crate::epcis::{EpcisEventV1, PointE6, SignedEpcisEventV1, SimplePolygon};
 use crate::types::{f, Profile, F, POSEIDON_TAG_ACTOR, THRESHOLD};
+use ed25519_dalek::SigningKey;
 use p3_field::PrimeCharacteristicRing;
 use p3_symmetric::Permutation;
 use rand::{Rng, SeedableRng};
@@ -11,6 +12,7 @@ pub struct SyntheticLot {
     pub timestamps: Vec<u64>,
     pub coords: Vec<PointE6>,
     pub events: Vec<EpcisEventV1>,
+    pub signatures: Vec<[u8; 64]>,
     pub cert_ids: Vec<u64>,
     pub lot_id: u64,
     pub secret: u64,
@@ -45,8 +47,10 @@ pub fn synthetic_lot(seed: u64, events: usize, profile: Profile) -> SyntheticLot
     let actor_id = rng.gen_range(10_000..=99_999);
     let actor_secret = rng.gen_range(100_000_000..=999_999_999);
     let role_tag = POSEIDON_TAG_ACTOR;
-    let mut actor_public_key = [0u8; 32];
-    rng.fill(&mut actor_public_key);
+    let mut actor_secret_key = [0u8; 32];
+    rng.fill(&mut actor_secret_key);
+    let actor_signing_key = SigningKey::from_bytes(&actor_secret_key);
+    let actor_public_key = actor_signing_key.verifying_key().to_bytes();
     let polygon =
         SimplePolygon::new(profile.polygon()).expect("built-in benchmark polygon is valid");
     let coords = compliant_points_outside_forbidden_polygon(&mut rng, events, profile);
@@ -63,6 +67,11 @@ pub fn synthetic_lot(seed: u64, events: usize, profile: Profile) -> SyntheticLot
             role: role_tag as u8,
             actor_public_key,
         })
+        .collect::<Vec<_>>();
+    let signatures = epcis_events
+        .iter()
+        .cloned()
+        .map(|event| SignedEpcisEventV1::sign(event, &actor_signing_key).signature)
         .collect();
 
     SyntheticLot {
@@ -70,6 +79,7 @@ pub fn synthetic_lot(seed: u64, events: usize, profile: Profile) -> SyntheticLot
         timestamps,
         coords,
         events: epcis_events,
+        signatures,
         cert_ids,
         lot_id,
         secret,
