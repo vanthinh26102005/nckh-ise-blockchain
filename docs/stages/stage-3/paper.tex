@@ -24,11 +24,11 @@
 \maketitle
 
 \begin{abstract}
-Global supply chains operating under the European Union Deforestation Regulation (EU 2023/1115, EUDR) must prove, at the granularity of individual lots, that commodities such as coffee, cocoa, and timber were not produced on deforested land after 31 December 2020. Existing industrial traceability stacks couple Electronic Product Code Information Services (EPCIS) event streams with permissioned blockchains or with hash-on-chain anchors, but neither approach offers verifiable compliance to third-party auditors without revealing the underlying farm coordinates, certificate identifiers, and pricing information. This paper presents an EPCIS-aware recursive zero-knowledge rollup architecture that publishes one constant-size proof per shipment on a public settlement layer while keeping the supporting EPCIS aggregations on a permissioned ledger. The contribution is fourfold. First, a formal signal-typing discipline maps EPCIS \texttt{ObjectEvent}, \texttt{AggregationEvent}, and \texttt{TransformationEvent} primitives onto arithmetic constraint systems with a soundness-preserving witness reduction. Second, a recursive Plonky2 wrapper composes five sub-circuits (geofence inclusion, certificate Merkle membership, threshold arithmetic on continuous KPIs, batched signature verification, and nullifier uniqueness) into a single attestation of constant verifier cost. Third, a selective-disclosure compliance view lets an EUDR auditor or a downstream EU importer reveal a chosen subset of attributes (lot identifier, harvest plot polygon hash, certificate root) without exposing competitive information. Fourth, a Vietnam-to-European-Union coffee case study compares the proposed design against private-only Hyperledger Fabric, hash-on-chain anchoring, and the VeCroToken benchmark on proving cost, settlement latency, throughput, and storage. The simulation shows that the proposed stack reaches an end-to-end audit latency of 4.1~s per shipment at 350~lots/minute with proof size 196~B, while reducing on-chain bytes per shipment by a factor of 18 against hash-on-chain and a factor of 73 against on-chain EPCIS replay. The framework provides a deployable template for EUDR, Carbon Border Adjustment Mechanism (CBAM), and Digital Product Passport (DPP) reporting in coffee, cocoa, timber, and battery supply chains.
+This paper specifies an EPCIS-aware recursive zero-knowledge rollup for privacy-preserving EUDR traceability and reports the current reproducible artifact boundary. The Rust artifact implements canonical EPCIS event encoding, C1--C5 Goldilocks/Poseidon2 base statements, and a Plonky3-recursion wrapper that proves and verifies those five statements locally. The wrapper's C4 statement is currently a Poseidon2 actor-authorization preimage, not an Ed25519 AIR; the artifact has no Solidity verifier, Fabric Gateway, or Anvil transaction path. Consequently, historical E2 measurements are prototype simulations and no settlement latency, gas cost, proof size target, or Fabric/Sepolia result is claimed. Ed25519 AIR, direct EVM verification, and Fabric-to-Anvil integration remain the next validation gates.
 \end{abstract}
 
 \begin{IEEEkeywords}
-Zero-knowledge proof, recursive SNARK, supply-chain traceability, EPCIS, EU Deforestation Regulation, privacy-preserving compliance, Industrial Internet of Things, Plonky2.
+Zero-knowledge proof, recursive STARK, supply-chain traceability, EPCIS, EU Deforestation Regulation, privacy-preserving compliance, Industrial Internet of Things, Plonky3.
 \end{IEEEkeywords}
 
 \section{Introduction}
@@ -38,7 +38,7 @@ The dominant industrial response is a stack that combines GS1 EPCIS 2.0 event ca
 
 A third family of designs, exemplified by VeCroToken and similar token-based traceability systems \cite{saberi2019blockchain}, encodes lot ownership as a non-fungible token and relies on attribute-based encryption for selective disclosure. These designs scale poorly under EUDR because each compliance check forces a per-attribute decryption that grows linearly with the number of audited fields, and they do not produce a single succinct artefact that an EU customs officer can verify in milliseconds at the border. The research gap is therefore a verifiable compliance object that is constant-size, privacy-preserving by default, selectively disclosable on demand, and economically settleable on a public layer.
 
-This paper closes that gap with an EPCIS-aware recursive zero-knowledge rollup. The design layers a permissioned Fabric channel for raw event capture (Layer~0), a recursive Plonky2 rollup that batches EPCIS-derived statements into a single proof (Layer~2), and a public Ethereum settlement contract that records the rollup root (Layer~1). The contributions are: (1) a signal-typing discipline that formally maps EPCIS \texttt{ObjectEvent}, \texttt{AggregationEvent}, and \texttt{TransformationEvent} primitives onto arithmetic constraints, with a proof that the reduction preserves provenance soundness; (2) a recursive composition rule that combines five domain sub-circuits (geofence, certificate, threshold, signature, nullifier) into one constant-size attestation, instantiated with the Plonky2 plonkish proof system; (3) a selective-disclosure compliance view that lets each downstream stakeholder reveal a different subset of attributes without re-proving; and (4) a simulation-based evaluation on a Vietnam-to-EU coffee corridor that benchmarks the proposed stack against three industrially deployed baselines under identical workload and threat assumptions.
+This paper studies that gap with an EPCIS-aware recursive zero-knowledge design. The target architecture layers a permissioned Fabric channel for raw event capture (Layer~0), a recursive Plonky3 rollup (Layer~2), and a public Ethereum settlement contract (Layer~1). The current artifact contributes canonical EPCIS event encoding, C1--C5 arithmetic statements, and a recursive composition rule instantiated with Plonky3 Goldilocks/Poseidon2. It states the reproducibility boundary explicitly: Ed25519 AIR, Solidity, Fabric, and Anvil components are not implemented, so no unmeasured public-chain or Fabric result is presented as an experiment.
 
 The remainder of the paper is organised as follows. Section~\ref{sec:related} reviews related work on EPCIS-based traceability, blockchain for sustainability compliance, and zero-knowledge rollups, and positions the contributions inside a comparative summary table. Section~\ref{sec:model} formalises the system model, the EUDR-driven threat model, and the notation. Section~\ref{sec:method} presents the EPCIS signal typing, the five sub-circuits, the recursive composition algorithm, and the selective-disclosure mechanism. Section~\ref{sec:experiments} reports the experimental protocol and answers four research questions on cryptographic cost, latency, throughput, and storage. Section~\ref{sec:conclusion} concludes and outlines deployment paths for CBAM and DPP scenarios.
 
@@ -119,10 +119,10 @@ $\mathcal{V}$ & compliance view: a subset of attributes disclosed \\
 We define a typing judgement $\Gamma \vdash \mathcal{E} : \tau_{ckt}$ that assigns each EPCIS event $\mathcal{E}$ to a circuit input type $\tau_{ckt}$. \texttt{ObjectEvent} primitives carrying geolocation attributes are typed as inputs to the geofence circuit $C_1$. \texttt{AggregationEvent} primitives joining child lots into a parent lot are typed as inputs to the Merkle membership circuit $C_2$. \texttt{TransformationEvent} primitives that change product identity (e.g., green coffee to roasted coffee) trigger a continuity proof in $C_2$ and an update of the threshold circuit $C_3$. The typing reduction preserves provenance soundness: if a Layer~0 trace satisfies the typing rules, then no adversary can produce a valid rollup proof for a different trace except with negligible probability.
 
 \subsection{Sub-Circuits}
-The five sub-circuits operate as follows. (1) $C_1$ (geofence): given a geolocation point and a commitment to a polygon $\mathcal{P}_g$, the circuit proves point-in-polygon membership using the winding-number reduction over field arithmetic. (2) $C_2$ (certificate): given a commitment to $\mathsf{root}_C$, the circuit proves Merkle membership of an issued certificate identifier without revealing the identifier. (3) $C_3$ (threshold): given a sequence of sensor readings, the circuit proves that each reading is bounded by a regulatory threshold $\tau$ and that the temporal sequence is monotonically non-decreasing in event time. (4) $C_4$ (signature): the circuit batch-verifies EdDSA signatures issued by Layer~0 endorsing peers on the events composing the batch. (5) $C_5$ (nullifier): the circuit derives a nullifier $\nu = h(\text{lot}, \text{epoch})$ and proves that $\nu$ does not appear in the published nullifier set, preventing the same lot from being claimed twice.
+The five sub-circuits operate as follows. (1) $C_1$ proves point-in-polygon membership over fixed-point WGS-84 coordinates. (2) $C_2$ proves Poseidon2 Merkle membership. (3) $C_3$ proves bounded readings and monotonic event time. (4) $C_4$ currently proves a Poseidon2 actor-authorization preimage; EPCIS fixtures are Ed25519-signed and checked by host code, but SHA-512 and Curve25519 equations are not constraints in this AIR. (5) $C_5$ proves a 32-bit sparse nullifier-map update with old/new roots, index, and state bound as public inputs.
 
 \subsection{Recursive Composition (Algorithm~\ref{alg:recursive})}
-The five sub-circuits are composed by a recursive Plonky2 wrapper that takes their five inner proofs $\pi_1, \dots, \pi_5$ and produces a single outer proof $\Pi$ whose verification cost is independent of the batch size.
+The five sub-circuits are composed by a recursive Plonky3 wrapper that takes their five inner proofs $\pi_1, \dots, \pi_5$ and produces one locally verifiable outer proof $\Pi$. The current implementation proves this composition in Rust; it does not claim an EVM verifier.
 
 \begin{algorithm}[h]
 \caption{Recursive EPCIS Proof Composition}
@@ -145,10 +145,10 @@ The five sub-circuits are composed by a recursive Plonky2 wrapper that takes the
 \end{algorithmic}
 \end{algorithm}
 
-The $\mathsf{Wrap}$ operator verifies the five inner Plonky2 proofs inside a Plonky2 circuit, exploiting plonkish recursion with a Goldilocks field and FRI commitments. The $\mathsf{Recurse}$ operator composes the per-lot wrappers along a Merkle tree of degree $d=4$, producing one final proof per epoch.
+The $\mathsf{Wrap}$ operator verifies the five inner Plonky3 proofs with Goldilocks/Poseidon2 FRI recursion. The $\mathsf{Recurse}$ operator composes the wrapped statements in Rust. ABI encoding and Solidity verification are not part of the current artifact.
 
 \subsection{Selective-Disclosure Compliance View}
-Given the rollup proof $\Pi$ and a requested view $\mathcal{V}$, the compliance gateway derives a derived proof $\Pi_\mathcal{V}$ that reveals exactly the attributes in $\mathcal{V}$ and nothing more. The derivation re-randomises the public inputs while keeping the recursion tree fixed, so the verifier cost of $\Pi_\mathcal{V}$ equals that of $\Pi$.
+Selective disclosure is a target interface, not an implemented artifact path. A future compliance gateway may derive a view proof $\Pi_\mathcal{V}$ for a requested attribute subset, but this repository does not yet implement or benchmark that derivation.
 
 \section{Experimental Evaluation}
 \label{sec:experiments}
@@ -157,61 +157,24 @@ Given the rollup proof $\Pi$ and a requested view $\mathcal{V}$, the compliance 
 The evaluation answers four research questions. RQ1: what is the cryptographic cost (proving time, verification time, proof size, memory) of the proposed recursive design as a function of batch size? RQ2: what end-to-end latency does the three-layer architecture deliver under realistic EUDR workloads? RQ3: how does the proposed stack compare against private-only Fabric, hash-on-chain, and the VeCroToken benchmark on throughput, on-chain bytes per shipment, and audit settlement latency? RQ4: how do the cryptographic and on-chain costs scale with the number of producers, lots per shipment, and rollup epoch length, and what are the implications for EUDR, CBAM, and DPP deployment?
 
 \subsection{Experimental Protocol}
-The case study models a Vietnam-to-EU coffee corridor with $N_p = 500$ producer cooperatives in the Central Highlands, three processing nodes, two exporters, two shipping carriers, and one EU importer. EPCIS events are synthesised from public coffee trade statistics following a Poisson arrival with rate $\lambda$ events per minute, with $\lambda \in \{60, 120, 240, 480, 960\}$. The recursive prover is implemented over Plonky2 (Goldilocks field, FRI rate $1/8$). The Fabric baseline uses Hyperledger Fabric 2.5 with three orderers and a Raft consensus. The hash-on-chain baseline anchors a Poseidon hash of each EPCIS document on Ethereum Sepolia. The VeCroToken baseline mints one ERC-721 token per lot with attribute-based encryption over each metadata field. Each configuration is repeated for at least 30 random seeds. We report mean and 95\% confidence intervals and test pairwise differences with the Wilcoxon signed-rank test at $\alpha = 0.05$.
+The artifact currently evaluates a deterministic EPCIS workload and Plonky3 Goldilocks/Poseidon2 base statements. The Rust recursive smoke test proves and verifies C1--C5 locally. Fabric 2.5, Ethereum Sepolia, Anvil receipts, and baseline comparisons are protocol targets rather than executed backends in this repository. Therefore the current paper revision reports implementation scope and test evidence, not settlement or comparative performance claims.
 
 \subsection{Results}
-Sub-section results corresponding to RQ1--RQ4 are tabulated in Tables~\ref{tab:rq1}--\ref{tab:rq3} and summarised below.
+This revision records implementation scope and validation gates for RQ1--RQ4; measured result tables are intentionally withheld until the direct verifier and integration path are complete.
 
-\textbf{RQ1 (cryptographic cost).} Per-lot proving time on a 16-core workstation grows sub-linearly with the number of EPCIS events per lot, reaching 1.87~s for 64 events. The wrapped per-lot proof is 196~B and verifies in 4.1~ms. Recursive composition of 256 per-lot proofs into one epoch proof costs 38.4~s of proving time and yields a final proof of 196~B that verifies in 4.2~ms.
+\textbf{RQ1 (cryptographic cost).} The repository contains runnable C1--C5 base tests and a real Rust recursive C1--C5 prove/verify smoke test. No fixed proof-size or latency target is claimed; benchmark tables must be regenerated from measured artifacts after the final verifier configuration is available.
 
-\begin{table}[h]
-\centering
-\caption{RQ1: cryptographic cost as a function of events per lot.}
-\label{tab:rq1}
-\begin{tabular}{rrrr}
-\toprule
-Events/lot & Prove (s) & Verify (ms) & Size (B) \\
-\midrule
-8  & 0.41 & 4.0 & 196 \\
-16 & 0.69 & 4.1 & 196 \\
-32 & 1.18 & 4.1 & 196 \\
-64 & 1.87 & 4.1 & 196 \\
-\bottomrule
-\end{tabular}
-\end{table}
+No RQ1 timing or proof-size table is included in this revision: the wrapper proof has been validated as a Rust smoke test, but the final ABI/verifier configuration and benchmark grid are not frozen.
 
-\textbf{RQ2 (end-to-end latency).} Median compliance-view latency (from EPCIS event ingestion to settled rollup proof on Ethereum Sepolia) is 4.1~s under $\lambda = 480$ events/min, with 95th-percentile 6.8~s.
+\textbf{RQ2 (end-to-end latency).} The checked-in E2 numbers are historical prototype measurements using cached base-proof timings and simulated L1 delays. They are not Fabric acknowledgement-to-Anvil receipt measurements and are not used as settlement claims.
 
-\textbf{RQ3 (comparative throughput and storage).} Table~\ref{tab:rq3} summarises the comparative evaluation on a one-hour workload.
+\textbf{RQ3 (comparative throughput and storage).} No comparative table is included: Fabric, EVM, and baseline adapters required for a fair one-hour workload are not implemented in the current artifact.
 
-\begin{table}[h!]
-\centering
-\caption{RQ3: Comparative evaluation on a one-hour Vietnam-to-EU coffee workload.}
-\label{tab:rq3}
-\footnotesize
-\setlength{\tabcolsep}{4pt}
-\renewcommand{\arraystretch}{1.15}
-\resizebox{\columnwidth}{!}{
-\begin{tabular}{@{}l r r r r@{}}
-\toprule
-\textbf{System} & \textbf{Throughput (lots/min)} & \textbf{Bytes/shipment} & \textbf{Audit (s)} & \textbf{Cost (USD/shipment)} \\
-\midrule
-Fabric (private) & 410 & 14,300 & 1.2 & 0.00 \\
-Hash-on-chain & 280 & 3,600 & 14.1 & 0.41 \\
-VeCroToken & 190 & 5,200 & 19.4 & 0.78 \\
-Proposed & 350 & 196 & 4.1 & 0.09 \\
-\bottomrule
-\end{tabular}
-}
-\end{table}
-
-The proposed design dominates the hash-on-chain and VeCroToken baselines on every metric except raw throughput against the fully private Fabric baseline, which carries no public-chain costs but offers no third-party verifiability.
-
-\textbf{RQ4 (scalability and policy implications).} Doubling the producer count to $N_p = 1000$ raises the per-epoch proving time linearly while keeping verifier cost constant; doubling the epoch length halves the marginal on-chain cost. The architecture remains feasible for CBAM (steel, aluminium, cement, electricity, fertiliser, hydrogen) and DPP (textiles, batteries, electronics) with the same five sub-circuits and a domain-specific threshold $\tau$.
+\textbf{RQ4 (scalability and policy implications).} Scalability and policy conclusions remain future work until the direct verifier and Fabric/Anvil path are measured. The circuit interfaces are intentionally parameterised for later CBAM and DPP workloads.
 
 \section{Conclusion}
 \label{sec:conclusion}
-This paper has shown that EPCIS event semantics can be lifted into a recursive zero-knowledge rollup that produces one constant-size, privacy-preserving, selectively disclosable compliance object per shipment. The design combines a permissioned Layer~0 for internal auditability, a recursive Plonky2 Layer~2 for cryptographic compression, and a public Ethereum Layer~1 for dispute resolution. Simulation on a Vietnam-to-EU coffee corridor demonstrates a 73-fold reduction in on-chain bytes per shipment versus EPCIS replay and a 4.1~s audit latency at 350 lots per minute, against three industrially deployed baselines. The same architecture extends to CBAM and DPP scenarios with domain-specific threshold circuits. Future work targets a pilot deployment with one Vietnamese coffee cooperative and one EU importer, an integration with Origintrail Decentralised Knowledge Graphs for off-chain raw data, and a formal Universally Composable security proof of the recursive wrapper.
+The current artifact establishes canonical EPCIS encoding, C1--C5 Goldilocks/Poseidon2 statements, and a Rust Plonky3 recursive prove/verify path. It does not yet establish Ed25519 verification inside the AIR, Solidity verification, Fabric ingestion, Anvil settlement, or any corresponding latency/cost claim. Those are explicit validation gates before a deployment or comparative paper result can be asserted.
 
 \begin{thebibliography}{20}
 

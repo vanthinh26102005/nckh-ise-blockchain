@@ -12,7 +12,8 @@ use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
 use p3_challenger::DuplexChallenger;
 #[cfg(feature = "recursion")]
 use p3_circuit::ops::{
-    generate_poseidon2_trace, generate_recompose_trace, GoldilocksD2Width8, Poseidon2Config,
+    generate_poseidon2_trace, generate_recompose_trace, GoldilocksD2Width8, NpoTypeId,
+    Poseidon2Config,
 };
 #[cfg(feature = "recursion")]
 use p3_circuit_prover::{BatchStarkProver, ConstraintProfile, TablePacking};
@@ -46,14 +47,15 @@ use p3_recursion::pcs::{
 use p3_recursion::traits::{RecursiveAir, RecursivePcs};
 #[cfg(feature = "recursion")]
 use p3_recursion::{
-    build_and_prove_aggregation_layer, BatchOnly, FriRecursionBackend, FriRecursionConfig,
-    FriVerifierParams, ProveNextLayerParams, RecursionInput, VerificationError,
+    build_and_prove_aggregation_layer, build_and_prove_next_layer, BatchOnly, FriRecursionBackend,
+    FriRecursionConfig, FriVerifierParams, ProveNextLayerParams, RecursionInput, VerificationError,
 };
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
 use p3_uni_stark::{
     prove, verify, Proof, ProverConstraintFolder, StarkConfig, SymbolicAirBuilder,
     VerifierConstraintFolder,
 };
+use rand_10::{rngs::SmallRng, SeedableRng};
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 #[cfg(feature = "recursion")]
@@ -64,6 +66,10 @@ const POSEIDON_WIDTH: usize = 8;
 const GOLDILOCKS_SBOX_DEGREE: u64 = 7;
 const SBOX_REGISTERS: usize = 1;
 const FRI_LOG_BLOWUP: usize = 2;
+const FRI_NUM_QUERIES: usize = 8;
+// A FRI proof with `log_final_poly_len = 0` still needs one fold phase, so the
+// smallest valid trace has 2^(log_blowup + 1) rows.
+const MIN_FRI_TRACE_ROWS: usize = 1 << (FRI_LOG_BLOWUP + 1);
 const HALF_FULL_ROUNDS: usize = GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS;
 const PARTIAL_ROUNDS: usize = GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8;
 const POSEIDON_COLS: usize = p3_poseidon2_air::num_cols::<
@@ -74,8 +80,10 @@ const POSEIDON_COLS: usize = p3_poseidon2_air::num_cols::<
     PARTIAL_ROUNDS,
 >();
 const C2_VECTOR_LANES: usize = 32;
-const C2_INDEX_BITS_START: usize = POSEIDON_COLS * C2_VECTOR_LANES;
-const C2_WIDTH: usize = C2_INDEX_BITS_START + STRICT_MERKLE_DEPTH;
+const C2_INDEX_BIT_COL: usize = POSEIDON_COLS;
+const C2_IS_REAL_COL: usize = C2_INDEX_BIT_COL + 1;
+const C2_LEVEL_COL: usize = C2_IS_REAL_COL + 1;
+const C2_WIDTH: usize = C2_LEVEL_COL + 1;
 const C5_SPARSE_DEPTH: usize = 32;
 const C5_VECTOR_LANES: usize = 128;
 const C5_INDEX_BITS_START: usize = POSEIDON_COLS * C5_VECTOR_LANES;
@@ -173,6 +181,7 @@ impl TemplateCache {
         }
         if circuits.contains(&CircuitKind::Wrapper) {
             for kind in [
+                CircuitKind::C1,
                 CircuitKind::C2,
                 CircuitKind::C3,
                 CircuitKind::C4,
@@ -258,7 +267,7 @@ pub fn build_template(
         ),
         CircuitKind::Wrapper => (
             0,
-            "blocked;recursion:Plonky3-recursion GitHub rev 524665d is pinned but currently panics in aggregation; no mocked recursive proof emitted",
+            "research;real:recursive Plonky3 wrapper verifies C1-C5 when built with the recursion feature; Ed25519 C4 remains separate work",
         ),
         CircuitKind::C1Legacy => (
             0,
@@ -337,7 +346,9 @@ pub fn witness_for(
         CircuitKind::C5 => {
             let _ = c5_trace_and_pis(lot, None)?;
         }
-        CircuitKind::Wrapper => bail!("recursive witness is blocked"),
+        CircuitKind::Wrapper => bail!(
+            "recursive witness is produced by prove_recursive_wrapper with the recursion feature"
+        ),
         CircuitKind::C1Legacy => {
             bail!("disabled circuit")
         }
@@ -352,9 +363,7 @@ pub fn wrapper_witness(
     _wrapper: &CircuitTemplate,
     _inner_proofs: &[usize],
 ) -> Result<WitnessBundle> {
-    bail!(
-        "Plonky3 recursive wrapper requires --features recursion and is currently blocked by upstream aggregation panic at pinned rev 524665d"
-    )
+    bail!("Plonky3 recursive wrapper requires --features recursion; use prove_recursive_wrapper")
 }
 
 fn config() -> MyConfig {
@@ -368,7 +377,7 @@ fn config() -> MyConfig {
         log_blowup: FRI_LOG_BLOWUP,
         log_final_poly_len: 0,
         max_log_arity: 1,
-        num_queries: 8,
+        num_queries: FRI_NUM_QUERIES,
         commit_proof_of_work_bits: 0,
         query_proof_of_work_bits: 0,
         mmcs: challenge_mmcs,
@@ -493,21 +502,19 @@ fn recursion_config() -> RecursionConfig {
     RecursionConfig {
         config: Arc::new(config()),
         fri_verifier_params: FriVerifierParams::with_mmcs(
-            2,
+            FRI_LOG_BLOWUP,
             0,
             0,
             0,
+            FRI_NUM_QUERIES,
             Poseidon2Config::GOLDILOCKS_D2_W8,
         ),
     }
 }
 
 fn poseidon_perm() -> Perm {
-    let external = p3_poseidon2::ExternalLayerConstants::new(
-        GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_INITIAL.to_vec(),
-        GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_FINAL.to_vec(),
-    );
-    Poseidon2Goldilocks::<POSEIDON_WIDTH>::new(&external, &GOLDILOCKS_POSEIDON2_RC_8_INTERNAL)
+    let mut rng = SmallRng::seed_from_u64(1);
+    Poseidon2Goldilocks::<POSEIDON_WIDTH>::new_from_rng_128(&mut rng)
 }
 
 fn poseidon_constants() -> RoundConstants<F, POSEIDON_WIDTH, HALF_FULL_ROUNDS, PARTIAL_ROUNDS> {
@@ -633,6 +640,7 @@ pub fn prove_recursive_wrapper(
     _profile: Profile,
 ) -> Result<RecursiveProofStats> {
     let witness_start = Instant::now();
+    let (c1_trace, c1_pis) = c1_serial_trace_and_pis(lot, events)?;
     let (c2_trace, c2_pis) = c2_trace_and_pis(lot, seed, events, None)?;
     validate_c3(lot, events)?;
     let c3_trace = c3_trace(lot, events)?;
@@ -642,6 +650,10 @@ pub fn prove_recursive_wrapper(
     let witness_ms = witness_start.elapsed().as_secs_f64() * 1000.0;
 
     let cfg = recursion_config();
+    let c1_air = C1SerialAir {
+        events,
+        level: usize::MAX,
+    };
     let c2_air = C2MerkleAir;
     let c3_air = C3Air;
     let c4_air = PoseidonStatementAir {
@@ -650,21 +662,38 @@ pub fn prove_recursive_wrapper(
     };
     let c5_air = C5NullifierUpdateAir;
 
+    let c1 = prove_recursion_stark(&cfg, &c1_air, c1_trace, &c1_pis)?;
     let c2 = prove_recursion_stark(&cfg, &c2_air, c2_trace, &c2_pis)?;
     let c3 = prove_recursion_stark(&cfg, &c3_air, c3_trace, &c3_pis)?;
     let c4 = prove_recursion_stark(&cfg, &c4_air, c4_trace, &c4_pis)?;
     let c5 = prove_recursion_stark(&cfg, &c5_air, c5_trace, &c5_pis)?;
-    let inner_prove_ms = c2.prove_ms + c3.prove_ms + c4.prove_ms + c5.prove_ms;
+    let inner_prove_ms = c1.prove_ms + c2.prove_ms + c3.prove_ms + c4.prove_ms + c5.prove_ms;
 
     let backend =
         FriRecursionBackend::<POSEIDON_WIDTH, 4, _>::new(Poseidon2Config::GOLDILOCKS_D2_W8)
             .for_extension_degree::<2>();
+    let base_params = ProveNextLayerParams {
+        table_packing: TablePacking::new(1, 3)
+            .with_horner_pack_k(4)
+            .with_npo_lanes(NpoTypeId::recompose(), 1)
+            .with_fri_params(0, FRI_LOG_BLOWUP),
+        constraint_profile: ConstraintProfile::Standard,
+    };
     let params = ProveNextLayerParams {
-        table_packing: TablePacking::new(1, 2).with_fri_params(0, 2),
+        table_packing: TablePacking::new(1, 3)
+            .with_horner_pack_k(4)
+            .with_npo_lanes(NpoTypeId::recompose(), 1)
+            .with_fri_params(0, FRI_LOG_BLOWUP),
         constraint_profile: ConstraintProfile::Standard,
     };
 
     let recursive_start = Instant::now();
+    let c1_input = RecursionInput::UniStark {
+        proof: &c1.proof,
+        air: &c1_air,
+        public_inputs: c1_pis,
+        preprocessed_commit: None,
+    };
     let c2_input = RecursionInput::UniStark {
         proof: &c2.proof,
         air: &c2_air,
@@ -690,17 +719,75 @@ pub fn prove_recursive_wrapper(
         preprocessed_commit: None,
     };
 
-    let left_layer = recursion_step("aggregation C2+C3", || {
-        build_and_prove_aggregation_layer::<RecursionConfig, _, _, _, 2>(
-            &c2_input, &c3_input, &cfg, &backend, &params, None,
+    let c1_layer = recursion_step("wrap C1", || {
+        build_and_prove_next_layer::<RecursionConfig, _, _, 2>(
+            &c1_input,
+            &cfg,
+            &backend,
+            &base_params,
         )
     })?;
-    let right_layer = recursion_step("aggregation C4+C5", || {
+    let c2_layer = recursion_step("wrap C2", || {
+        build_and_prove_next_layer::<RecursionConfig, _, _, 2>(
+            &c2_input,
+            &cfg,
+            &backend,
+            &base_params,
+        )
+    })?;
+    let c3_layer = recursion_step("wrap C3", || {
+        build_and_prove_next_layer::<RecursionConfig, _, _, 2>(
+            &c3_input,
+            &cfg,
+            &backend,
+            &base_params,
+        )
+    })?;
+    let c4_layer = recursion_step("wrap C4", || {
+        build_and_prove_next_layer::<RecursionConfig, _, _, 2>(
+            &c4_input,
+            &cfg,
+            &backend,
+            &base_params,
+        )
+    })?;
+    let c5_layer = recursion_step("wrap C5", || {
+        build_and_prove_next_layer::<RecursionConfig, _, _, 2>(
+            &c5_input,
+            &cfg,
+            &backend,
+            &base_params,
+        )
+    })?;
+
+    let c1_input = c1_layer.into_recursion_input::<BatchOnly>();
+    let c2_input = c2_layer.into_recursion_input::<BatchOnly>();
+    let c3_input = c3_layer.into_recursion_input::<BatchOnly>();
+    let c4_input = c4_layer.into_recursion_input::<BatchOnly>();
+    let c5_input = c5_layer.into_recursion_input::<BatchOnly>();
+
+    let left_layer = recursion_step("aggregation C1+C2", || {
         build_and_prove_aggregation_layer::<RecursionConfig, _, _, _, 2>(
-            &c4_input, &c5_input, &cfg, &backend, &params, None,
+            &c1_input, &c2_input, &cfg, &backend, &params, None,
+        )
+    })?;
+    let middle_layer = recursion_step("aggregation C3+C4", || {
+        build_and_prove_aggregation_layer::<RecursionConfig, _, _, _, 2>(
+            &c3_input, &c4_input, &cfg, &backend, &params, None,
         )
     })?;
     let left_input = left_layer.into_recursion_input::<BatchOnly>();
+    let middle_input = middle_layer.into_recursion_input::<BatchOnly>();
+    let right_layer = recursion_step("aggregation C3+C4+C5", || {
+        build_and_prove_aggregation_layer::<RecursionConfig, _, _, _, 2>(
+            &middle_input,
+            &c5_input,
+            &cfg,
+            &backend,
+            &params,
+            None,
+        )
+    })?;
     let right_input = right_layer.into_recursion_input::<BatchOnly>();
     let final_layer = recursion_step("final aggregation", || {
         build_and_prove_aggregation_layer::<RecursionConfig, _, _, _, 2>(
@@ -721,7 +808,7 @@ pub fn prove_recursive_wrapper(
     verifier.register_poseidon2_table::<2>(Poseidon2Config::GOLDILOCKS_D2_W8);
     verifier.register_recompose_table::<2>(false);
     catch_unwind(AssertUnwindSafe(|| {
-        verifier.verify_all_tables(&final_layer.0)
+        verifier.verify_all_tables::<Challenge>(&final_layer.0)
     }))
     .map_err(|payload| {
         anyhow!(
@@ -1543,7 +1630,7 @@ impl BaseAir<F> for C2MerkleAir {
     }
 
     fn main_next_row_columns(&self) -> Vec<usize> {
-        vec![]
+        (0..C2_WIDTH).collect()
     }
 
     fn num_public_values(&self) -> usize {
@@ -1557,35 +1644,63 @@ impl BaseAir<F> for C2MerkleAir {
 
 impl<AB: AirBuilder<F = F>> Air<AB> for C2MerkleAir {
     fn eval(&self, builder: &mut AB) {
-        let root_pub = builder.public_values()[0];
+        let root_pub: AB::Expr = builder.public_values()[0].into();
         let main = builder.main();
         let local = main.current_slice();
+        let next = main.next_slice();
+        let local_poseidon = poseidon_lane::<AB>(local, 0);
+        let next_poseidon = poseidon_lane::<AB>(next, 0);
+        eval_poseidon2_cols(builder, local_poseidon);
 
-        for lane in 0..C2_VECTOR_LANES {
-            let cols = poseidon_lane::<AB>(local, lane);
-            eval_poseidon2_cols(builder, cols);
+        let local_output: AB::Expr =
+            local_poseidon.ending_full_rounds[HALF_FULL_ROUNDS - 1].post[0].into();
+        let next_bit = next[C2_INDEX_BIT_COL];
+        let local_real = local[C2_IS_REAL_COL];
+        let next_real = next[C2_IS_REAL_COL];
+        let local_level = local[C2_LEVEL_COL];
+        let next_level = next[C2_LEVEL_COL];
+
+        builder.assert_zero(local_real * (local_real - F::ONE));
+
+        {
+            let mut first = builder.when_first_row();
+            first.assert_zero(local[C2_INDEX_BIT_COL]);
+            first.assert_one(local_real);
+            first.assert_zero(local_level);
+            leaf_assert_event_tuple(&mut first, local_poseidon);
         }
 
-        let leaf = poseidon_lane::<AB>(local, 0);
-        leaf_assert_event_tuple(builder, leaf);
-        let mut previous_output = leaf.ending_full_rounds[HALF_FULL_ROUNDS - 1].post[0];
+        {
+            let mut transition = builder.when_transition();
+            transition.assert_zero(next_real * (next_real - F::ONE));
+            transition.assert_zero(next_real * (local_real - F::ONE));
+            transition.assert_eq(next_level, local_level + next_real);
 
-        for level in 0..STRICT_MERKLE_DEPTH {
-            let bit = local[C2_INDEX_BITS_START + level];
-            let path = poseidon_lane::<AB>(local, level + 1);
-            builder.assert_zero(bit * (bit - F::ONE));
-            builder.assert_eq(path.inputs[2], f(POSEIDON_TAG_CERT));
-            builder.assert_zero(path.inputs[3]);
-            builder.assert_zero(path.inputs[4]);
-            builder.assert_zero(path.inputs[5]);
-            builder.assert_zero(path.inputs[6]);
-            builder.assert_eq(path.inputs[7], f(3));
-            builder.assert_zero((bit - F::ONE) * (path.inputs[0] - previous_output));
-            builder.assert_zero(bit * (path.inputs[1] - previous_output));
-            previous_output = path.ending_full_rounds[HALF_FULL_ROUNDS - 1].post[0];
+            let enabled = local_real * next_real;
+            transition.assert_zero(enabled.clone() * next_bit * (next_bit - F::ONE));
+            transition
+                .assert_zero(enabled.clone() * (next_poseidon.inputs[2] - f(POSEIDON_TAG_CERT)));
+            transition.assert_zero(enabled.clone() * next_poseidon.inputs[3]);
+            transition.assert_zero(enabled.clone() * next_poseidon.inputs[4]);
+            transition.assert_zero(enabled.clone() * next_poseidon.inputs[5]);
+            transition.assert_zero(enabled.clone() * next_poseidon.inputs[6]);
+            transition.assert_zero(enabled.clone() * (next_poseidon.inputs[7] - f(3)));
+            transition.assert_zero(
+                enabled.clone()
+                    * (next_bit - F::ONE)
+                    * (next_poseidon.inputs[0] - local_output.clone()),
+            );
+            transition
+                .assert_zero(enabled * next_bit * (next_poseidon.inputs[1] - local_output.clone()));
+
+            let one_minus_next: AB::Expr = F::ONE.into();
+            let ends_path = local_real * (one_minus_next - next_real);
+            transition
+                .assert_zero(ends_path.clone() * (local_level - f(STRICT_MERKLE_DEPTH as u64)));
+            transition.assert_zero(ends_path * (local_output - root_pub));
         }
 
-        builder.assert_eq(previous_output, root_pub);
+        builder.when_last_row().assert_zero(local_real);
     }
 }
 
@@ -1597,7 +1712,7 @@ impl BaseAir<F> for C5NullifierUpdateAir {
     }
 
     fn main_next_row_columns(&self) -> Vec<usize> {
-        vec![]
+        (0..C5_WIDTH).collect()
     }
 
     fn num_public_values(&self) -> usize {
@@ -1605,7 +1720,7 @@ impl BaseAir<F> for C5NullifierUpdateAir {
     }
 
     fn max_constraint_degree(&self) -> Option<usize> {
-        None
+        Some(GOLDILOCKS_SBOX_DEGREE as usize)
     }
 }
 
@@ -1854,12 +1969,15 @@ fn c4_trace_and_pis(
     let role_tag = f(lot.role_tag);
     let input = c4_poseidon2_input(actor_id, actor_secret, role_tag);
     let commitment = poseidon2_permute(input)[0];
-    let trace = poseidon_trace(vec![input]);
+    let trace = repeat_trace_row(poseidon_trace(vec![input]).values, POSEIDON_COLS);
     let mut pis = vec![actor_id, role_tag, commitment];
     match tamper {
         Some(C4Tamper::WrongSecret) => {
             let bad = c4_poseidon2_input(actor_id, actor_secret + F::ONE, role_tag);
-            return Ok((poseidon_trace(vec![bad]), pis));
+            return Ok((
+                repeat_trace_row(poseidon_trace(vec![bad]).values, POSEIDON_COLS),
+                pis,
+            ));
         }
         Some(C4Tamper::WrongRole) => pis[1] += F::ONE,
         Some(C4Tamper::WrongCommitment) => pis[2] += F::ONE,
@@ -1989,9 +2107,19 @@ fn c2_trace(inputs: Vec<[F; POSEIDON_WIDTH]>, index_bits: &[F]) -> RowMajorMatri
     debug_assert_eq!(index_bits.len(), STRICT_MERKLE_DEPTH);
     let poseidon = poseidon_trace(inputs);
     debug_assert_eq!(poseidon.values.len(), POSEIDON_COLS * C2_VECTOR_LANES);
-    let mut values = Vec::with_capacity(C2_WIDTH);
-    values.extend_from_slice(&poseidon.values);
-    values.extend_from_slice(index_bits);
+    let mut values = Vec::with_capacity(C2_WIDTH * C2_VECTOR_LANES);
+    for row in 0..C2_VECTOR_LANES {
+        let start = row * POSEIDON_COLS;
+        values.extend_from_slice(&poseidon.values[start..start + POSEIDON_COLS]);
+        let is_real = row <= STRICT_MERKLE_DEPTH;
+        values.push(if row == 0 || !is_real {
+            F::ZERO
+        } else {
+            index_bits[row - 1]
+        });
+        values.push(F::from_bool(is_real));
+        values.push(f(row.min(STRICT_MERKLE_DEPTH) as u64));
+    }
     RowMajorMatrix::new(values, C2_WIDTH)
 }
 
@@ -2308,7 +2436,7 @@ fn c5_trace(
     values.extend_from_slice(index_bits);
     values.extend_from_slice(quotient_bits);
     values.extend_from_slice(siblings);
-    RowMajorMatrix::new(values, C5_WIDTH)
+    repeat_trace_row(values, C5_WIDTH)
 }
 
 fn c5_nullifier_input(lot_id: u64, secret: u64) -> [F; POSEIDON_WIDTH] {
@@ -2411,6 +2539,15 @@ fn poseidon_trace(inputs: Vec<[F; POSEIDON_WIDTH]>) -> RowMajorMatrix<F> {
     >(padded, &poseidon_constants(), 0)
 }
 
+fn repeat_trace_row(row: Vec<F>, width: usize) -> RowMajorMatrix<F> {
+    debug_assert_eq!(row.len(), width);
+    let mut values = Vec::with_capacity(width * MIN_FRI_TRACE_ROWS);
+    for _ in 0..MIN_FRI_TRACE_ROWS {
+        values.extend_from_slice(&row);
+    }
+    RowMajorMatrix::new(values, width)
+}
+
 pub struct PoseidonStatementAir {
     public_input_indices: [Option<usize>; 4],
     num_pis: usize,
@@ -2428,7 +2565,7 @@ impl BaseAir<F> for PoseidonStatementAir {
     }
 
     fn main_next_row_columns(&self) -> Vec<usize> {
-        vec![]
+        (0..BaseAir::width(self)).collect()
     }
 
     fn num_public_values(&self) -> usize {
@@ -2436,7 +2573,7 @@ impl BaseAir<F> for PoseidonStatementAir {
     }
 
     fn max_constraint_degree(&self) -> Option<usize> {
-        None
+        Some(GOLDILOCKS_SBOX_DEGREE as usize)
     }
 }
 
@@ -2844,6 +2981,14 @@ mod tests {
     }
 
     #[test]
+    fn wrapper_template_describes_the_current_recursive_scope() -> Result<()> {
+        let template = build_template(CircuitKind::Wrapper, 8, Profile::CoffeeSmall)?;
+        assert!(template.note.contains("C1-C5"));
+        assert!(!template.note.contains("blocked"));
+        Ok(())
+    }
+
+    #[test]
     fn c1_valid_outside_polygon_passes() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(6, 8, profile);
@@ -2935,13 +3080,34 @@ mod tests {
 
     #[cfg(feature = "recursion")]
     #[test]
-    fn wrapper_recursive_plonky3_reports_upstream_blocker() {
+    fn recursion_poseidon_perm_matches_upstream_seed_one() {
+        use p3_symmetric::Permutation;
+        use rand_10::{rngs::SmallRng, SeedableRng};
+
+        let input = core::array::from_fn(|index| f((index as u64 + 1) * 17));
+        let actual = poseidon_perm().permute(input);
+        let mut rng = SmallRng::seed_from_u64(1);
+        let expected =
+            Poseidon2Goldilocks::<POSEIDON_WIDTH>::new_from_rng_128(&mut rng).permute(input);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[cfg(feature = "recursion")]
+    #[test]
+    fn recursion_requires_eight_fri_queries() {
+        assert_eq!(recursion_config().fri_verifier_params.num_queries, 8);
+    }
+
+    #[cfg(feature = "recursion")]
+    #[test]
+    fn wrapper_recursive_plonky3_proves_and_verifies() {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(1, 8, profile);
-        let err = prove_recursive_wrapper(&lot, 1, 8, profile)
-            .expect_err("pinned upstream recursion rev should report blocker");
-        let message = format!("{err:#}");
-        assert!(message.contains("upstream Plonky3-recursion"));
-        assert!(message.contains("trace_next is always present"));
+        let stats = prove_recursive_wrapper(&lot, 1, 8, profile)
+            .expect("recursive wrapper should prove and verify all inner proofs");
+        assert!(stats.prove_ms > 0.0);
+        assert!(stats.verify_ms > 0.0);
+        assert!(stats.proof_bytes > 0);
     }
 }

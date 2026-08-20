@@ -2,6 +2,8 @@
 
 Ngày: 07/08/2026
 
+> Ghi chú lịch sử: các số liệu và mô tả simulation ở đây không phải Fabric acknowledgement-to-Anvil receipt benchmark.
+
 Ghi chú nội bộ nhóm về cách E2 benchmark hoạt động, dùng để tham khảo khi viết paper hoặc giải thích cho thầy.
 
 ---

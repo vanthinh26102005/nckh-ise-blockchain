@@ -1,5 +1,7 @@
 # Báo cáo Tuần 2 — E1 Cryptographic Benchmark
 
+> Tài liệu lịch sử của tuần 2. Các nhận định về revision `524665d` và wrapper bị chặn không mô tả artifact hiện tại; xem `docs/reports/e1_teacher_report.md` để biết trạng thái mới.
+
 **Người viết**: Nhân
 **Ngày**: 07/06/2026
 **Phạm vi**: 01/06/2026 – 07/06/2026

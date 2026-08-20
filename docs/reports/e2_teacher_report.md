@@ -3,6 +3,8 @@
 **Người viết**: Nhân
 **Ngày**: 07/08/2026
 
+> Cập nhật artifact 21/08/2026: Plonky3-recursion wrapper Rust đã prove/verify thật C1–C5, nhưng benchmark E2 bên dưới là số liệu lịch sử của pipeline mô phỏng; chưa có Fabric acknowledgement, Solidity verification hay Anvil receipt.
+
 > Số liệu E2 dựa trên benchmark thực tế của Trí (issue #8), chạy trên máy Trí ngày 07/08/2026 bằng lệnh `make e2`. Không sử dụng số estimate hay số từ draft paper cũ.
 
 ---
@@ -39,7 +41,7 @@ Mỗi event đi qua các bước sau, mỗi bước ghi 1 timestamp:
 
 1. **Ingestion** (`ingest_at_ms`) — event được sinh và ghi timestamp.
 2. **Lot batching** (`lot_ready_at_ms`) — events dồn vào lot, lot sẵn sàng khi event cuối trong lot đến.
-3. **Proof generation** (`proof_start_ms` → `proof_end_ms`) — chạy C2→C3→C4→C5 tuần tự cho lot đó. Proof timing dùng `witness_ms + prove_ms` đo được từ E1, cache theo circuit + lot size (xem mục 5.2).
+3. **Proof generation** (`proof_start_ms` → `proof_end_ms`) — pipeline lịch sử chạy C2→C3→C4→C5 tuần tự cho lot đó. Proof timing dùng `witness_ms + prove_ms` đo được từ E1, cache theo circuit + lot size (xem mục 5.2).
 4. **L1 submit** (`submit_tx_at_ms`) — ngay sau proof xong.
 5. **L1 confirmation** (`confirmed_at_ms`) — L1 confirm. Mock mode cộng thêm 12,000ms.
 
@@ -78,9 +80,9 @@ Tất cả L1 mode trong crate hiện tại đều là simulation — `MockL1Ada
 
 Pipeline gọi `prove_and_verify` thật cho lot đầu tiên mỗi `(circuit, lot_size)`, sau đó cache lại `witness_ms + prove_ms` cho các lot cùng kích cỡ. Số liệu proof là đo thật từ Plonky3, nhưng không chạy lại proof cho mỗi lot — amortize qua cache. Template/setup time không tính vào proof window.
 
-### 5.3. Không chạy recursive wrapper
+### 5.3. Recursive wrapper không nằm trong số liệu lịch sử
 
-E2 chỉ chạy base proofs C2–C5. Plonky3-recursion rev `524665d` vẫn panic (`trace_next is always present`) trong aggregation path. Không emit mocked proof. Kết quả E2 là base proof pipeline latency, không phải full recursive rollup latency.
+E2 lịch sử chỉ chạy base proofs C2–C5. Hiện tại Rust wrapper ở revision `b363397` đã có test prove/verify thật C1–C5, nhưng chưa được nối vào workload timing.
 
 ### 5.4. C4 vẫn là Poseidon2 proxy
 
@@ -90,9 +92,10 @@ Giống E1, C4 là Poseidon2 actor authorization proof, không phải EdDSA/Ed25
 
 ## 6. Bước tiếp theo
 
-1. Kết nối L1 thật — chạy Anvil local rồi Sepolia testnet để có confirmation latency thực.
-2. Theo dõi upstream Plonky3-recursion để unblock recursive wrapper.
-3. Tích hợp kết quả E2 vào draft paper cho phần RQ2.
+1. Nếu mở rộng paper sang production settlement: implement Ed25519 AIR và kiểm thử batch signature failure.
+2. Nếu cần public-chain evaluation: thêm ABI proof cố định + Solidity verifier, rồi kiểm thử trực tiếp trên Anvil.
+3. Nếu cần end-to-end deployment study: thêm Fabric 2-org/2-peer/3-Raft topology và Gateway acknowledgement, rồi đo lại E2 không cache proof.
+4. Paper hiện tại chỉ dùng số liệu prototype đã ghi rõ scope; các hạng mục trên là future work.
 
 ---
 
