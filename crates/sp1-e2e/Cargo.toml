@@ -1,0 +1,7 @@
+[workspace]
+members = ["policy", "program", "script"]
+resolver = "2"
+
+[workspace.dependencies]
+ed25519-dalek = { version = "3.0.0", default-features = false }
+sha2 = { version = "0.10", default-features = false }

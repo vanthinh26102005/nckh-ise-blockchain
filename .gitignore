@@ -1,4 +1,6 @@
 /target/
+/crates/sp1-e2e/target/
+/infra/fabric/chaincode/e2epcis/vendor/
 /.DS_Store
 
 # Ignore large raw benchmark CSV files (>100MB)

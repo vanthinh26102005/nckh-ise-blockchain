@@ -1,0 +1,12 @@
+{
+  "name": "eudr-sp1-contracts",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "ethers": "6.16.0",
+    "solc": "0.8.30"
+  },
+  "scripts": {
+    "anvil:smoke": "node test/anvil_sp1_smoke.mjs"
+  }
+}
