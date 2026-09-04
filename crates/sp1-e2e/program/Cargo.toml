@@ -1,0 +1,9 @@
+[package]
+name = "eudr-policy-program"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+eudr-policy = { path = "../policy" }
+sp1-zkvm = "6.4.0"

@@ -1,0 +1,23 @@
+[package]
+name = "sp1-e2e"
+version = "0.1.0"
+edition = "2021"
+publish = false
+default-run = "sp1-e2e"
+
+[[bin]]
+name = "sp1-e2e"
+path = "src/bin/main.rs"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+eudr-policy = { path = "../policy" }
+ed25519-dalek.workspace = true
+hex = "0.4"
+serde_json = "1"
+sha2.workspace = true
+sp1-sdk = { version = "6.4.0", features = ["blocking", "native-gnark"] }
+
+[build-dependencies]
+sp1-build = "6.4.0"
