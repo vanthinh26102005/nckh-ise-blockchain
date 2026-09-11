@@ -1,39 +1,46 @@
-# Báo cáo E1 - Plonky3 Base Prototype
+# Báo cáo E1 — Chính sách tuân thủ và đường chứng minh ZK
 
-Ngày cập nhật: 21/08/2026
+**Ngày cập nhật:** 11/09/2026
+**Mục tiêu nghiên cứu (RQ1):** Chi phí mật mã thay đổi thế nào theo kích thước lô EPCIS?
 
-## 1. Trạng thái hiện tại
+## 1. E1 giải quyết phần nào của đề tài
 
-E1 hiện dùng Plonky3 core cho code path chính. Base circuits chạy với Goldilocks, Poseidon2, FRI/STARK proof flow.
+Một doanh nghiệp cần chứng minh một lô hàng tuân thủ EUDR mà không công khai toàn bộ tọa độ, chứng chỉ, danh tính tác nhân và lịch sử sự kiện. E1 biến yêu cầu đó thành một mệnh đề có thể chứng minh bằng không tiết lộ (zero knowledge): dữ liệu gốc là private witness, còn commitment/root và kết quả tuân thủ là public input.
 
-Các circuit base đang chạy:
+Mô hình dữ liệu dùng chung là `EpcisEventV1`: bản ghi EPCIS có mã hoá nhị phân cố định, big-endian, gồm version, event/lot/epoch ID, thời gian, readings, tọa độ WGS-84 microdegree có dấu, certificate ID, role và public key. Vì byte representation là canonical, cùng một event luôn cho cùng digest/commitment ở Fabric, prover và verifier.
 
-| Circuit | Vai trò | Trạng thái |
+## 2. Các ràng buộc đã triển khai
+
+| Ràng buộc | Ý nghĩa nghiệp vụ | Cơ chế hiện có |
 |---|---|---|
-| `c2_poseidon2_merkle_depth16` | Certificate/event membership MVP với Poseidon2 path depth 16 | chạy được |
-| `c1_polygon_outside` | Point-in-polygon WGS-84 microdegree với commitment polygon/event | chạy được |
-| `c3_threshold_time` | Threshold/time baseline | chạy được |
-| `c4_poseidon2_actor_authorization` | Actor authorization bằng Poseidon2 và private actor secret | chạy được |
-| `c5_poseidon2_sparse_nullifier_depth32` | Sparse nullifier map 32-bit, bind old/new root, index và state | chạy được |
+| C1 | Điểm của event nằm **ngoài** vùng cấm EUDR | Point-in-polygon số nguyên WGS-84; polygon đơn giản 3–32 đỉnh, từ chối tự cắt, điểm trên cạnh/đỉnh |
+| C2 | Certificate/actor thuộc registry được phép | Poseidon2 Merkle membership |
+| C3 | Reading vượt ngưỡng và thời gian tăng chặt | So sánh số nguyên trong AIR |
+| C4 | Tác nhân được uỷ quyền cho event | Baseline Plonky3: Poseidon2 actor authorization; đường E2E SP1: `Ed25519 verify_strict` chạy trong zkVM |
+| C5 | Một nullifier không thể được dùng lại | Sparse Merkle map 32-bit, kiểm tra old/new root và empty leaf trước insert |
 
-## 2. Giới hạn cần ghi rõ
+C1–C5 đều bind dữ liệu private với public commitments/root. Các test phủ các trường hợp vùng trong/ngoài/cạnh, polygon lõm hoặc tự cắt, threshold/time lỗi, registry path/root lỗi và replay nullifier.
 
-- Không claim proof size `196B`; proof size là số đo Plonky3 STARK thực tế.
-- C4 trong phạm vi artifact hiện tại là Poseidon2 actor-authorization statement; Ed25519 AIR là hướng mở rộng, không phải claim của phiên bản này.
-- C2/C5 là Goldilocks/Poseidon2 circuits; đây chưa phải Solidity-verifiable production accumulator.
-- Wrapper đã được migration sang Plonky3-recursion revision `b363397` và có test prove + recursive verify thật cho C1–C5. Solidity/EVM verifier không thuộc phạm vi paper revision hiện tại.
-- C4 vẫn là Poseidon2 actor-authorization statement. Fixture EPCIS có chữ ký Ed25519 và host có thể đối chiếu chữ ký, nhưng Ed25519 SHA-512/Curve25519 chưa được ràng buộc trong AIR; không được gọi đây là Ed25519 ZK proof.
+## 3. Hai đường chứng minh được giữ tách bạch
 
-## 3. Lệnh kiểm tra
+| Đường | Vai trò | Điều đã kiểm chứng | Không được suy diễn thành |
+|---|---|---|---|
+| **Plonky3 baseline** | Artifact nghiên cứu để đo từng circuit và recursion | C1–C5 base proof; recursive wrapper prove/verify thật trong Rust | Ed25519 AIR hay Solidity verifier |
+| **SP1 deployment path** | Chứng minh policy C1–C5 để có thể verify trực tiếp trên EVM | Guest Rust được prove bằng SP1 Groth16 và Solidity verifier nhận proof trong smoke E2E | Benchmark E1 hoàn chỉnh 30 seeds |
 
-```bash
-cargo build
-cargo test
-cargo run --release -- --events 8,16,32,64 --seeds 3 --circuits c2,c3,c4,c5
-```
+Điểm quan trọng: C4 của baseline không phải Ed25519 AIR. Chữ ký Ed25519 được kiểm tra thật trong guest SP1; vì guest execution nằm trong proof, kết quả xác minh chữ ký được bind vào proof E2E. Cách này khác với việc tự xây SHA-512/Ed25519 AIR trong Plonky3, nên báo cáo/paper phải gọi đúng tên hai phương án.
 
-Kết quả benchmark lịch sử của báo cáo này nằm ở `results/e1/archive/legacy/raw.csv`.
+## 4. Trạng thái E1 hiện tại
 
-## 4. Kết luận
+Đã hoàn thành phần **implementation và kiểm chứng logic**: canonical event, C1–C5, recursion Rust cho baseline, và policy guest dùng cho E2E. `cargo test --workspace` đã pass 32 test E1, 7 EPCIS integration test và 7 test E2 tại lần kiểm chứng gần nhất.
 
-E1 đã hoàn thiện trong phạm vi paper revision hiện tại: base circuits C1–C5 và recursive wrapper Plonky3 chạy/verify được trong Rust. Paper cần ghi rõ đây là Rust research artifact; Ed25519 AIR, ABI Solidity, Fabric Gateway và Anvil settlement là hướng phát triển tiếp theo, không được trình bày như kết quả đã đo.
+Chưa hoàn thành phần **thí nghiệm RQ1** của paper: chạy lặp 30 seeds cho các kích thước lô `{8, 16, 32, 64}`, ghi proof time, verify time, RAM và proof size; sau đó báo cáo median/IQR/CI. Không có số benchmark chưa đo nào được dùng làm kết quả nghiên cứu.
+
+## 5. Kế hoạch để đóng E1
+
+1. Chốt một đường benchmark duy nhất (Plonky3 baseline hoặc SP1 deployment path) và cấu hình máy chạy.
+2. Chạy warm-up, sau đó 30 seeds/lô; template/artifact setup được ghi riêng, không lẫn vào proving time.
+3. Lưu raw result ngoài Git, tái tạo bảng/biểu đồ và kiểm tra regression.
+4. Cập nhật paper chỉ bằng số liệu đã đo, đồng thời nêu rõ đường chứng minh được đo.
+
+**Kết luận:** E1 đã có mệnh đề tuân thủ và proof path hoạt động; chưa được gọi là E1 thực nghiệm hoàn chỉnh cho đến khi benchmark có kiểm soát ở trên hoàn tất.

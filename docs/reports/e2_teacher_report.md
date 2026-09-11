@@ -1,127 +1,58 @@
-# Báo cáo E2 — End-to-End Latency Benchmark
+# Báo cáo E2 — Kiểm chứng end-to-end từ Fabric đến Anvil
 
-**Người viết**: Nhân
-**Ngày**: 07/08/2026
+**Ngày cập nhật:** 11/09/2026
+**Mục tiêu nghiên cứu (RQ2):** Từ lúc Fabric xác nhận một lô EPCIS đến khi public chain ghi nhận kết quả tuân thủ mất bao lâu?
 
-> Cập nhật artifact 21/08/2026: Plonky3-recursion wrapper Rust đã prove/verify thật C1–C5, nhưng benchmark E2 bên dưới là số liệu lịch sử của pipeline mô phỏng; chưa có Fabric acknowledgement, Solidity verification hay Anvil receipt.
+## 1. Pipeline đang kiểm chứng
 
-> Số liệu E2 dựa trên benchmark thực tế của Trí (issue #8), chạy trên máy Trí ngày 07/08/2026 bằng lệnh `make e2`. Không sử dụng số estimate hay số từ draft paper cũ.
-
----
-
-## 1. E2 là gì, khác E1 chỗ nào
-
-E1 đo hiệu năng từng circuit riêng lẻ: prove time, verify time, proof size cho C2/C3/C4/C5. E2 đo thời gian end-to-end cho toàn bộ pipeline — từ lúc một EPCIS event được ingest cho đến khi epoch chứa nó được confirm ở blockchain layer. Đây là metric trả lời RQ2 trong Stage 3.
-
-Nói ngắn gọn: E1 hỏi "mỗi circuit tốn bao nhiêu", E2 hỏi "cả hệ thống tốn bao nhiêu cho mỗi event".
-
----
-
-## 2. Cấu hình chạy
-
-| Tham số | Giá trị |
-|---|---|
-| Profile | `full` |
-| Lambda (λ) | 480 events/min (Poisson arrival) |
-| Duration | 60 min |
-| Seeds | 30 |
-| Total events | 863,755 |
-| Total lots | 35,498 |
-| Lot size | N(24, 8) cắt [8, 64] events/lot |
-| L1 mode | `mock` |
-| Máy chạy | Apple Silicon (aarch64, macOS) |
-
-Event stream sinh deterministic bằng `ChaCha20Rng`. Lot được dồn tự nhiên theo phân phối normal cắt ngưỡng, mô phỏng cách supply chain event dồn thành lô hàng.
-
----
-
-## 3. Pipeline đo latency
-
-Mỗi event đi qua các bước sau, mỗi bước ghi 1 timestamp:
-
-1. **Ingestion** (`ingest_at_ms`) — event được sinh và ghi timestamp.
-2. **Lot batching** (`lot_ready_at_ms`) — events dồn vào lot, lot sẵn sàng khi event cuối trong lot đến.
-3. **Proof generation** (`proof_start_ms` → `proof_end_ms`) — pipeline lịch sử chạy C2→C3→C4→C5 tuần tự cho lot đó. Proof timing dùng `witness_ms + prove_ms` đo được từ E1, cache theo circuit + lot size (xem mục 5.2).
-4. **L1 submit** (`submit_tx_at_ms`) — ngay sau proof xong.
-5. **L1 confirmation** (`confirmed_at_ms`) — L1 confirm. Mock mode cộng thêm 12,000ms.
-
-Total latency = `confirmed_at_ms − ingest_at_ms`.
-
----
-
-## 4. Kết quả
-
-Từ `results/e2/archive/legacy/summary.csv`:
-
-| Metric | Latency (ms) | Latency (s) |
-|---|---:|---:|
-| Median (P50) | 13,740 | 13.74 |
-| P95 | 16,145 | 16.15 |
-| P99 | 17,210 | 17.21 |
-| Min | 12,297 | 12.30 |
-| Max | 20,992 | 20.99 |
-| Mean | 13,925 | 13.93 |
-
-Phần lớn events hoàn tất trong khoảng 13–14 giây. Giá trị median gần sát L1 mock delay (12s) vì proof generation chỉ tốn ~25–30ms tổng cho 4 circuits, phần còn lại là batching wait. P95/P99 không quá xa median, pipeline khá ổn định dưới workload này.
-
-Min ~12.3s xảy ra khi event rơi đúng lúc lot gần đủ và prover đang rỗi. Max ~21s xảy ra khi event phải chờ lot tích lũy lâu + prover bận lot trước.
-
-Biểu đồ CDF và histogram: `results/e2/archive/legacy/cdf.png`.
-
----
-
-## 5. Giới hạn cần biết
-
-### 5.1. L1 mode là `mock`, không phải Sepolia
-
-Tất cả L1 mode trong crate hiện tại đều là simulation — `MockL1Adapter` cộng thêm delay cố định (mock = 12s, anvil = 1s, sepolia = 15s). Không gửi RPC transaction thật lên Anvil hay Sepolia. Kết quả này không phải kết quả Sepolia.
-
-### 5.2. Proof timing dùng cache từ E1
-
-Pipeline gọi `prove_and_verify` thật cho lot đầu tiên mỗi `(circuit, lot_size)`, sau đó cache lại `witness_ms + prove_ms` cho các lot cùng kích cỡ. Số liệu proof là đo thật từ Plonky3, nhưng không chạy lại proof cho mỗi lot — amortize qua cache. Template/setup time không tính vào proof window.
-
-### 5.3. Recursive wrapper không nằm trong số liệu lịch sử
-
-E2 lịch sử chỉ chạy base proofs C2–C5. Hiện tại Rust wrapper ở revision `b363397` đã có test prove/verify thật C1–C5, nhưng chưa được nối vào workload timing.
-
-### 5.4. C4 vẫn là Poseidon2 proxy
-
-Giống E1, C4 là Poseidon2 actor authorization proof, không phải EdDSA/Ed25519 thật.
-
----
-
-## 6. Bước tiếp theo
-
-1. Nếu mở rộng paper sang production settlement: implement Ed25519 AIR và kiểm thử batch signature failure.
-2. Nếu cần public-chain evaluation: thêm ABI proof cố định + Solidity verifier, rồi kiểm thử trực tiếp trên Anvil.
-3. Nếu cần end-to-end deployment study: thêm Fabric 2-org/2-peer/3-Raft topology và Gateway acknowledgement, rồi đo lại E2 không cache proof.
-4. Paper hiện tại chỉ dùng số liệu prototype đã ghi rõ scope; các hạng mục trên là future work.
-
----
-
-## 7. Tái tạo kết quả
-
-```bash
-make e2          # full run: 60 min, 30 seeds
-make e2-quick    # smoke test: 5 min, 3 seeds
+```text
+EpcisEventV1 canonical bytes
+        │
+        ▼
+Fabric Gateway ──► Fabric ledger + EventIngested acknowledgement
+        │
+        ▼
+SP1 guest kiểm tra C1–C5 ──► Groth16 proof + public values
+        │
+        ▼
+Anvil: EpochAnchor.verifyAndAnchor ──► epoch/state root
 ```
 
-Nếu đã có raw CSV, chỉ cần sinh lại plot + report:
-```bash
-python3 scripts/e2_analyze.py --raw results/e2/full/raw.csv --out-dir results/e2/full \
-  --cdf-out results/e2/full/cdf.png --report-out results/e2/full/report.md
-```
+Fabric chaincode `e2epcis` lưu canonical bytes và SHA-256 digest, phát `EventIngested`, đồng thời từ chối schema, digest hoặc ID trùng. Guest SP1 nhận dữ liệu và witness, kiểm tra policy C1–C5, rồi tạo proof Groth16. Contract `EpochAnchor` chỉ ghi epoch/state root khi Solidity verifier chấp nhận proof và epoch chưa từng được anchor.
 
----
+## 2. Smoke test đã chạy thật
 
-## 8. Tham chiếu
+Lần chạy local gần nhất dùng Fabric 2.5 (2 organization, 2 peer, 1 orderer), Fabric Gateway cổng 8081 và Anvil. Tám `EpcisEventV1` canonical, mỗi event 86 byte, được ghi và đọc lại từ ledger trước khi prove.
 
-| Tài liệu | Đường dẫn |
+| Kiểm tra | Kết quả |
 |---|---|
-| E2 summary CSV | `results/e2/archive/legacy/summary.csv` |
-| E2 metadata | `results/e2/archive/legacy/metadata.json` |
-| E2 CDF plot | `results/e2/archive/legacy/cdf.png` |
-| E2 auto-generated report | `results/e2/archive/legacy/report.md` |
-| E2 bench crate | `crates/e2-bench/` |
-| E1 teacher report | `docs/reports/e1_teacher_report.md` |
-| E1 tuần 2 report | `docs/research/e1/06-report-to-teacher-week2.md` |
+| Fabric acknowledgement và ledger readback | 8/8 event thành công |
+| SP1 Groth16 prove và local verify | Thành công |
+| `verifyAndAnchor` với proof hợp lệ | Accepted; state root được cập nhật |
+| Thay một byte proof | Rejected |
+| Thay public values | Rejected |
+| Anchor lại cùng epoch | Rejected |
+
+Trong lần chạy đó, SP1 proof mất **842.874 giây**, Anvil anchor mất **3.223 giây**, và khoảng từ Fabric acknowledgement đến L1 receipt là **846.097 giây**. Proof fixture dài 356 byte; transaction hợp lệ dùng 293,364 gas trong Anvil. Đây là số đo của **một smoke lot 8 event trên CPU local**, không phải median/P95 của benchmark paper.
+
+## 3. Điều E2 này chứng minh và điều chưa chứng minh
+
+Đã chứng minh ở mức integration: dữ liệu thực đi qua Fabric, proof policy thật được tạo/verify, và EVM không chỉ “anchor chữ ký/proof giả” mà kiểm tra proof trước khi cập nhật state. Đây là khác biệt cốt lõi với E2 lịch sử.
+
+`make e2` và các kết quả lưu trong `results/e2/archive/legacy/` vẫn được giữ để truy vết, nhưng là pipeline mô phỏng: L1 delay mock và proving-time cache. Chúng không được dùng để trả lời RQ2 hiện tại.
+
+Chưa chứng minh:
+
+- Topology triển khai mục tiêu 3 Raft orderer; smoke hiện có 1 orderer để kiểm chứng luồng tối thiểu.
+- Workload RQ2: 480 event/phút, 60 phút, 30 seed, lot size ngẫu nhiên 8–64.
+- P50/P95/P99 có ý nghĩa thống kê hoặc thông lượng đủ cho production.
+- Ethereum public testnet/mainnet; Anvil được chọn để proof verification thật nhưng không phát sinh chi phí mạng thật.
+
+## 4. Kế hoạch để đóng E2
+
+1. Chuyển prover sang hạ tầng GPU phù hợp nếu được cấp quyền; chạy A/B CPU–GPU để xác nhận tốc độ thay vì ước lượng.
+2. Chạy smoke lại sau khi nâng topology cần thiết, rồi chạy benchmark RQ2 riêng từng seed, không timing-cache per lot.
+3. Đo từ Fabric acknowledgement đến Anvil receipt; tách rõ setup/cache artifact ra khỏi thời gian prove.
+4. Xuất raw result ngoài Git, tính median/IQR/P95/P99 và cập nhật paper bằng kết quả đo thật.
+
+**Kết luận:** đường E2E chức năng đã được kiểm chứng thật. E2 với tư cách thí nghiệm latency của paper vẫn đang chờ benchmark quy mô đầy đủ.
