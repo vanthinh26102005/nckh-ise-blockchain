@@ -3,21 +3,21 @@
 **Ngày cập nhật:** 11/09/2026
 **Dành cho:** rà soát hướng nghiên cứu với giảng viên
 
-## Tóm tắt một câu
+## Tóm tắt
 
 Nhóm đã có đường kiểm chứng thật **Fabric → ZK proof → Solidity verifier trên Anvil** cho policy C1–C5; chưa có bộ benchmark E1/E2 đầy đủ và chưa triển khai E3/E4, vì vậy chưa gọi toàn bộ paper là hoàn thành.
 
 ## 1. Đối chiếu draft và implementation
 
-| Hạng mục | Draft định hướng | Hiện trạng implementation | Lý do/thông điệp cần ghi đúng |
-|---|---|---|---|
-| EPCIS | Dữ liệu truy xuất nguồn gốc | `EpcisEventV1` canonical 86-byte, dùng xuyên Fabric/prover/test | Tránh mỗi layer hash/parse khác nhau |
-| C1–C5 | Policy tuân thủ trong ZK | C1 geofence, C2 registry, C3 threshold/time, C4 authorization, C5 nullifier đã có | C4 cần phân biệt baseline Poseidon2 với Ed25519 trong SP1 guest |
-| Recursion | Plonky3 recursive rollup | Recursive wrapper Plonky3 prove/verify thật trong Rust | Đây là baseline nghiên cứu, chưa có direct Solidity verifier |
-| EVM verification | Draft hướng đến public-chain verification | SP1 Groth16 proof được Solidity verifier kiểm tra và anchor trên Anvil | EVM verify là thật, nhưng proof system là SP1 deployment path thay vì port Plonky3 verifier |
-| Fabric | Fabric làm private data layer | 2 org/2 peer/1 orderer smoke, chaincode + gateway thật | Chưa phải topology mục tiêu 3 Raft orderer |
-| E2 latency | Ingest đến L1 confirmation | Có một E2E smoke đo Fabric acknowledgement đến Anvil receipt | Chưa phải benchmark 60 phút × 30 seed |
-| E3/E4 | Comparison và scale study | Chưa bắt đầu | Không được ghi như kết quả đã có |
+| Hạng mục       | Draft định hướng                          | Hiện trạng implementation                                                          | Note                                                                                             |
+| ---------------- | --------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| EPCIS            | Dữ liệu truy xuất nguồn gốc              | `EpcisEventV1` canonical 86-byte, dùng xuyên Fabric/prover/test                  | Tránh mỗi layer hash/parse khác nhau                                                          |
+| C1–C5           | Policy tuân thủ trong ZK                    | C1 geofence, C2 registry, C3 threshold/time, C4 authorization, C5 nullifier đã có | C4 cần phân biệt baseline Poseidon2 với Ed25519 trong SP1 guest                              |
+| Recursion        | Plonky3 recursive rollup                      | Recursive wrapper Plonky3 prove/verify thật trong Rust                              | Đây là baseline nghiên cứu, chưa có direct Solidity verifier                              |
+| EVM verification | Draft hướng đến public-chain verification | SP1 Groth16 proof được Solidity verifier kiểm tra và anchor trên Anvil         | EVM verify là thật, nhưng proof system là SP1 deployment path thay vì port Plonky3 verifier |
+| Fabric           | Fabric làm private data layer                | 2 org/2 peer/1 orderer smoke, chaincode + gateway thật                              | Chưa phải topology mục tiêu 3 Raft orderer                                                   |
+| E2 latency       | Ingest đến L1 confirmation                  | Có một E2E smoke đo Fabric acknowledgement đến Anvil receipt                    | Chưa phải benchmark 60 phút × 30 seed                                                        |
+| E3/E4            | Comparison và scale study                    | Chưa bắt đầu                                                                     | Không được ghi như kết quả đã có                                                       |
 
 ## 2. Những thay đổi quan trọng và lý do
 
@@ -41,22 +41,22 @@ Không giữ các claim cũ như proof `196B`, Fabric/Sepolia/recursion “đã 
 
 ## 3. Mốc implementation đã merge
 
-| Mốc | Nội dung |
-|---|---|
-| PR #17 | Canonical EPCIS, C1–C5 baseline và Plonky3 recursion Rust |
-| PR #18 | SP1 policy guest, Fabric chaincode/gateway, Solidity verifier/anchor và E2E smoke |
-| PR #19 | Sửa nonce trong Anvil smoke và ghi lại evidence kiểm chứng gần nhất |
+| Mốc  | Nội dung                                                                          |
+| ----- | ---------------------------------------------------------------------------------- |
+| PR#17 | Canonical EPCIS, C1–C5 baseline và Plonky3 recursion Rust                        |
+| PR#18 | SP1 policy guest, Fabric chaincode/gateway, Solidity verifier/anchor và E2E smoke |
+| PR#19 | Sửa nonce trong Anvil smoke và ghi lại evidence kiểm chứng gần nhất         |
 
 ## 4. Trạng thái theo experiment
 
-| Experiment | Implementation | Evidence hiện có | Việc còn lại |
-|---|---|---|---|
-| E1 / RQ1 | Có C1–C5 và proof paths | Unit/integration/recursion tests | 30-seed benchmark, thống kê và biểu đồ |
-| E2 / RQ2 | Có Fabric→SP1→Anvil smoke | 8 event, proof valid/tamper/duplicate checks | 60 phút × 30 seed, không cache proving time |
-| E3 / RQ3 | Chưa có baseline runner | Chưa có | Reproduce baseline, cùng workload, statistical comparison |
-| E4 / RQ4 | Chưa có sweep runner | Chưa có | Sweep scale/policy và phân tích trade-off |
+| Experiment | Implementation               | Evidence hiện có                           | Việc còn lại                                            |
+| ---------- | ---------------------------- | -------------------------------------------- | ---------------------------------------------------------- |
+| E1 / RQ1   | Có C1–C5 và proof paths   | Unit/integration/recursion tests             | 30-seed benchmark, thống kê và biểu đồ               |
+| E2 / RQ2   | Có Fabric→SP1→Anvil smoke | 8 event, proof valid/tamper/duplicate checks | 60 phút × 30 seed, không cache proving time             |
+| E3 / RQ3   | Chưa có baseline runner    | Chưa có                                    | Reproduce baseline, cùng workload, statistical comparison |
+| E4 / RQ4   | Chưa có sweep runner       | Chưa có                                    | Sweep scale/policy và phân tích trade-off               |
 
-## 5. Đề xuất bước tiếp theo với thầy
+## 5. Đề xuất bước tiếp theo
 
 1. Xác nhận có chấp nhận cấu trúc hai đường: Plonky3 cho research baseline, SP1 Groth16 cho EVM deployment validation.
 2. Xác nhận budget/hạ tầng GPU cho E1/E2 full run; kết quả GPU phải được đo A/B trên chính workload này.
