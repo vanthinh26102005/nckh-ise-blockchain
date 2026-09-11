@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import process from "node:process";
-import { ContractFactory, JsonRpcProvider, Wallet, AbiCoder } from "ethers";
+import { ContractFactory, JsonRpcProvider, Wallet, NonceManager, AbiCoder } from "ethers";
 import solc from "solc";
 
 const fixturePath = process.env.SP1_FIXTURE;
@@ -27,10 +27,10 @@ if (errors.length) throw new Error(errors.map((entry) => entry.formattedMessage)
 
 const artifact = (source, contract) => compilerOutput.contracts[source][contract];
 const provider = new JsonRpcProvider(process.env.ANVIL_RPC ?? "http://127.0.0.1:8545");
-const signer = new Wallet(
+const signer = new NonceManager(new Wallet(
   process.env.ANVIL_PRIVATE_KEY ?? "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
   provider,
-);
+));
 const deploy = async (source, contract, ...args) => {
   const compiled = artifact(source, contract);
   const instance = await new ContractFactory(compiled.abi, compiled.evm.bytecode.object, signer).deploy(...args);
