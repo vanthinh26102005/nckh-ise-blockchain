@@ -1,6 +1,6 @@
 # E1/E2 Implementation Update
 
-Ngày cập nhật: 21/08/2026
+Ngày cập nhật: 11/09/2026
 PR: [#17](https://github.com/vanthinh26102005/nckh-ise-blockchain/pull/17)
 Merge commit: `fa0dfbb`
 
@@ -173,4 +173,16 @@ Nhánh follow-up bổ sung một đường triển khai tách biệt, không tha
 
 Đã kiểm tra lại nhanh trên nhánh này: 5 policy tests, 3 E2E-runner tests, Go chaincode tests, Go gateway build/tests, Rust format và Solidity compilation đều pass. Local Fabric 2-org/2-peer acknowledgement/read-back cũng đã được chạy trước đó; topology này vẫn là smoke, không phải mục tiêu 3-Raft.
 
-Gate duy nhất chưa pass là CPU Groth16 proving thật: SP1 v6.4 tải artifact lớn nhưng không hoàn tất installation tại `~/.sp1/circuits/groth16/v6.1.0`, nên prover trả `artifact not found`. Vì chưa có fixture proof thật, chưa chạy được acceptance/rejection receipt của contract, và **không được gọi nhánh này là Fabric → proof → Anvil E2E hoàn chỉnh hay dùng làm số liệu paper**. Khi artifact cài thành công, cần chạy lại `e2e_smoke` để lấy một receipt hợp lệ cùng ba rejection checks trước khi đóng milestone.
+## 10. Kết quả smoke Fabric → SP1 → Anvil (11/09/2026)
+
+SP1 Groth16 circuit v6.1.0 đã được cài hoàn tất, có marker `.complete`; vì vậy lỗi runtime `artifact not found` ở lần kiểm tra trước đã được loại bỏ. Một lượt smoke E2E mới đã chạy từ đầu đến cuối với epoch `1789102714`:
+
+- Fabric 2.5.8 local chạy `e2epcis` với 2 organization/2 peer/1 orderer và endorsement policy của cả Org1 và Org2. Gateway nhận và đọc lại đúng 8 canonical EPCIS V1 events trước khi bắt đầu timing proof.
+- SP1 tạo và local-verify một Groth16 proof mới cho đúng lot đó. Thời gian proving sau Fabric acknowledgement là `842,874 ms`; artifact/circuit installation không nằm trong số đo này.
+- Solidity SP1 verifier accept proof trên Anvil, `EpochAnchor` cập nhật state root, và receipt hợp lệ là `0x336b2f5c7b911cd2a5355c710f721f479b22e8aac5ccd4e8055f0e43b74ba8d5` (`status = 1`, `293,364` gas).
+- Cùng smoke script đã xác nhận proof bị sửa một byte, public values bị sửa một byte và epoch trùng đều bị revert.
+- Khoảng từ Fabric acknowledgement tới Anvil receipt là `846,097 ms`, trong đó bước deploy/anchor Anvil là `3,223 ms`. Proof có kích thước `356` bytes.
+
+Kết quả này chứng minh đường **Fabric acknowledgement → C1--C5 SP1 proof → Solidity verification → Anvil receipt** chạy thật, không dùng mock proof hay Rust-only anchor. Fixture proof và dữ liệu đo thô chỉ nằm ở `/tmp`, không được commit.
+
+Smoke này chưa phải benchmark chính và chưa đồng nghĩa đã đạt toàn bộ topology trong paper: môi trường vẫn có 1 orderer thay vì 3 Raft orderer, và chưa có 60 phút × 30 seed độc lập. Hai hạng mục đó vẫn phải chạy riêng rồi mới được đưa số liệu vào paper.
