@@ -1,19 +1,10 @@
 use anyhow::{anyhow, bail, Context, Result};
-use base64::{engine::general_purpose::STANDARD, Engine};
-use sha2::{Digest, Sha256};
-use sp1_e2e::{fixture_input, prove_evm_fixture};
+use sp1_e2e::{fixture_input, http::FabricGateway, prove_evm_fixture};
 use std::env;
 use std::fs;
-use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-struct FabricEndpoint {
-    address: String,
-    host_header: String,
-}
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 fn main() -> Result<()> {
     let epoch_id = env_u64("E2E_EPOCH")?.unwrap_or_else(default_epoch_id);
@@ -26,10 +17,10 @@ fn main() -> Result<()> {
     let input = fixture_input(epoch_id, first_event_id);
 
     for witness in &input.events {
-        post_event(&endpoint, &witness.event_bytes)?;
+        endpoint.post_event(&witness.event_bytes)?;
     }
     for witness in &input.events {
-        assert_event_was_committed(&endpoint, &witness.event_bytes)?;
+        endpoint.assert_event_was_committed(&witness.event_bytes)?;
     }
 
     let proof_start = Instant::now();
@@ -90,102 +81,10 @@ fn default_epoch_id() -> u64 {
         .as_secs()
 }
 
-fn fabric_endpoint() -> Result<FabricEndpoint> {
+fn fabric_endpoint() -> Result<FabricGateway> {
     let value =
         env::var("FABRIC_GATEWAY_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
-    let authority = value
-        .strip_prefix("http://")
-        .ok_or_else(|| anyhow!("FABRIC_GATEWAY_URL must use http://"))?;
-    if authority.is_empty() || authority.contains('/') {
-        bail!("FABRIC_GATEWAY_URL must be an http://host:port endpoint");
-    }
-    Ok(FabricEndpoint {
-        address: authority.to_string(),
-        host_header: authority.to_string(),
-    })
-}
-
-fn post_event(endpoint: &FabricEndpoint, event: &[u8; 86]) -> Result<()> {
-    let body = format!(
-        "{{\"canonicalEvent\":\"{}\",\"digest\":\"{}\"}}",
-        STANDARD.encode(event),
-        hex::encode(Sha256::digest(event)),
-    );
-    let response = http_request(endpoint, "POST", "/events", Some(&body))?;
-    if response.status != 201 {
-        bail!(
-            "Fabric did not acknowledge event {}: {}",
-            event_id(event),
-            response.body
-        );
-    }
-    Ok(())
-}
-
-fn assert_event_was_committed(endpoint: &FabricEndpoint, event: &[u8; 86]) -> Result<()> {
-    let canonical_event = STANDARD.encode(event);
-    let response = http_request(
-        endpoint,
-        "GET",
-        &format!("/events/{}", event_id(event)),
-        None,
-    )?;
-    if response.status != 200 || !response.body.contains(&canonical_event) {
-        bail!(
-            "Fabric ledger query did not return canonical event {}",
-            event_id(event)
-        );
-    }
-    Ok(())
-}
-
-struct HttpResponse {
-    status: u16,
-    body: String,
-}
-
-fn http_request(
-    endpoint: &FabricEndpoint,
-    method: &str,
-    path: &str,
-    body: Option<&str>,
-) -> Result<HttpResponse> {
-    let mut stream = TcpStream::connect(&endpoint.address)
-        .with_context(|| format!("connect to Fabric gateway {}", endpoint.address))?;
-    stream.set_read_timeout(Some(Duration::from_secs(90)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(30)))?;
-    let body = body.unwrap_or("");
-    write!(
-        stream,
-        "{method} {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-        endpoint.host_header,
-        body.len(),
-    )?;
-    stream.flush()?;
-
-    let mut response = String::new();
-    stream.read_to_string(&mut response)?;
-    parse_http_response(&response)
-}
-
-fn parse_http_response(response: &str) -> Result<HttpResponse> {
-    let (head, body) = response
-        .split_once("\r\n\r\n")
-        .ok_or_else(|| anyhow!("Fabric gateway returned malformed HTTP response"))?;
-    let status = head
-        .split_whitespace()
-        .nth(1)
-        .ok_or_else(|| anyhow!("Fabric gateway response had no status"))?
-        .parse()
-        .context("parse Fabric gateway HTTP status")?;
-    Ok(HttpResponse {
-        status,
-        body: body.to_string(),
-    })
-}
-
-fn event_id(event: &[u8; 86]) -> u64 {
-    u64::from_be_bytes(event[1..9].try_into().expect("canonical event ID width"))
+    FabricGateway::from_url(&value)
 }
 
 fn fixture_proof_bytes(fixture: &str) -> Result<usize> {
@@ -205,24 +104,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn event_id_reads_the_canonical_big_endian_field() {
-        let mut event = [0_u8; 86];
-        event[1..9].copy_from_slice(&9_000_000_100_u64.to_be_bytes());
-        assert_eq!(event_id(&event), 9_000_000_100);
-    }
-
-    #[test]
     fn proof_byte_count_rejects_odd_hex() {
         assert!(fixture_proof_bytes(r#"{\"proof\":\"0x0\"}"#).is_err());
-    }
-
-    #[test]
-    fn http_response_parser_preserves_gateway_error_body() {
-        let response = parse_http_response(
-            "HTTP/1.1 409 Conflict\r\nContent-Type: application/json\r\n\r\n{\"error\":\"duplicate\"}",
-        )
-        .unwrap();
-        assert_eq!(response.status, 409);
-        assert_eq!(response.body, r#"{"error":"duplicate"}"#);
     }
 }

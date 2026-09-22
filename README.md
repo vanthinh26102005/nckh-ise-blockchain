@@ -103,9 +103,49 @@ Không claim `196B`. C4 hiện là Poseidon2 actor authorization proof; Ed25519/
 
 ## E2 End-to-End Latency Benchmark
 
-Đo thời gian từ lúc EPCIS event được ingest đến khi epoch/proof artifact được submit và confirm ở lớp blockchain (RQ2).
+RQ2 đo từ **Fabric commit acknowledgement của event cuối trong lot** đến **Anvil receipt** xác nhận SP1 Groth16 proof. Đường này dùng `EpcisEventV1` canonical, Fabric Gateway/chaincode thật, SP1 verify local và Solidity verifier thật; không có proof-timing cache hay L1 delay giả.
 
-### Smoke Run (Quick Profile)
+### Real E2 runner
+
+Khởi động topology Fabric 2 org/2 peer/3 Raft orderer và Gateway theo [infra/fabric/README.md](infra/fabric/README.md), sau đó chạy Anvil và anchor service trên **cùng host** với runner:
+
+```bash
+anvil --port 8545
+cd contracts && npm run anvil:e2-anchor
+```
+
+Pilot tăng tốc chỉ dùng để debug, không phải số liệu paper:
+
+```bash
+cargo run --release --manifest-path crates/sp1-e2e/Cargo.toml -p sp1-e2e \
+  --bin e2_real_benchmark -- \
+  --accelerated --duration-min 1 --seeds 1 \
+  --out results/e2/real/raw.jsonl
+```
+
+Benchmark chính phải pace theo đồng hồ thực và dùng GPU prover sau khi preflight GPU pass:
+
+```bash
+cargo run --release --manifest-path crates/sp1-e2e/Cargo.toml -p sp1-e2e \
+  --features cuda --bin e2_real_benchmark -- \
+  --prover cuda --lambda-events-per-min 480 --duration-min 60 --seeds 30 \
+  --out results/e2/real/raw.jsonl
+```
+
+`raw.jsonl` chứa từng lot: event count, proof time, Anvil anchor time, Fabric-acknowledgement-to-receipt latency, proof bytes, gas và transaction hash. Setup proving key được ghi rõ là ngoài timed window; mỗi lot vẫn tạo/verify một Groth16 proof mới. Raw output không được commit.
+
+Sau một run hoàn chỉnh, kiểm tra đủ seed và tạo summary tái lập được:
+
+```bash
+python3 scripts/e2_real_analyze.py \
+  --raw results/e2/real/raw.jsonl \
+  --out results/e2/real/summary.json \
+  --expected-seeds 30
+```
+
+Topology benchmark trong repo là 2 org/2 peer/**3 EtcdRaft orderer**. Bộ 60 phút × 30 seed chỉ là số liệu paper sau khi GPU preflight pass và `raw.jsonl` được analyzer kiểm tra đủ 30 seed.
+
+### Legacy simulation (không dùng làm evidence RQ2)
 
 ```bash
 make e2-quick
@@ -120,21 +160,15 @@ Sinh các file output trong `results/e2/quick/`:
 - `results/e2/quick/report.md`
 - `results/e2/quick/cdf.png`
 
-### Full Run (Stage 3 Guide Aligned)
+`make e2` và `make e2-quick` được giữ để tái lập prototype Plonky3 cũ, nhưng có cache C2–C5 và L1 simulation. Không đưa CSV hay biểu đồ từ các lệnh này vào paper E2.
+
+### Historical CLI
 
 ```bash
 make e2
 ```
 
 Chạy full workload: `lambda = 480 events/min`, `duration = 60 min`, `seeds = 30`, `l1-mode = mock`.
-
-### CLI Direct Usage
-
-Khi chạy CLI trực tiếp, tạo trước thư mục output tương ứng:
-
-```bash
-mkdir -p results/e2/quick results/e2/strict
-```
 
 ```bash
 cargo run --release -p e2-bench -- \
@@ -162,9 +196,4 @@ cargo run --release -p e2-bench -- \
   --metadata-out results/e2/strict/metadata.json
 ```
 
-### Disclaimers & Disclosures
-
-- E2 mang `EpcisEventV1` canonical (86-byte big-endian) trong workload. C1 được prove trên payload của từng lot; C2–C5 vẫn dùng cache timing theo circuit/lot size cho prototype hiện tại, và sẽ bị bỏ trong benchmark thật PR4.
-- Report ghi rõ đây là **prototype pipeline latency**: C1 được prove theo lot, C2–C5 vẫn dùng cache timing theo circuit/lot size; recursive wrapper chưa nằm trong E2 timing.
-- L1 confirmation hiện là deterministic simulation: `mock` ~12s, `local/anvil` ~1s, `sepolia` ~15s. Chưa submit transaction thật lên Anvil/Sepolia.
-- Fabric Gateway/chaincode và Solidity verifier trực tiếp chưa được implement; vì vậy E2 chưa phải benchmark Fabric → recursive proof → Anvil end-to-end.
+`crates/e2-bench/` không gọi Fabric, SP1 hay RPC Anvil; nó là historical artifact tách biệt với `crates/sp1-e2e/script/src/bin/e2_real_benchmark.rs`.

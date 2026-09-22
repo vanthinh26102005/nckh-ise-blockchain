@@ -1,5 +1,6 @@
 use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 
 pub const EPCIS_EVENT_BYTES: usize = 86;
 pub const ED25519_SIGNATURE_BYTES: usize = 64;
@@ -295,12 +296,8 @@ pub fn evaluate(input: &PolicyInput) -> Result<PolicyPublicValues, PolicyError> 
         batch.update(witness.event_bytes);
     }
 
-    let nullifier = hash_parts(&[
-        b"EUDR:E2E:NULLIFIER:V1",
-        &input.lot_id.to_be_bytes(),
-        &input.nullifier_secret,
-    ]);
-    let index = u32::from_be_bytes(nullifier[..4].try_into().expect("fixed digest width"));
+    let nullifier = nullifier_hash(input.lot_id, input.nullifier_secret);
+    let index = nullifier_index(input.lot_id, input.nullifier_secret);
     let old_root = sparse_root(index, empty_leaf(), &input.nullifier_path);
     if old_root != input.old_nullifier_root {
         return Err(PolicyError::C5Nullifier);
@@ -369,6 +366,80 @@ pub fn nullifier_default_path() -> [[u8; 32]; NULLIFIER_TREE_DEPTH] {
     path
 }
 
+pub fn nullifier_index(lot_id: u64, nullifier_secret: [u8; 32]) -> u32 {
+    u32::from_be_bytes(
+        nullifier_hash(lot_id, nullifier_secret)[..4]
+            .try_into()
+            .expect("fixed digest width"),
+    )
+}
+
+/// Host-side sparse tree used to construct the next private C5 witness without materialising
+/// the 2^32 leaf map.
+#[derive(Clone, Debug, Default)]
+pub struct SparseNullifierMap {
+    nodes: HashMap<(usize, u32), [u8; 32]>,
+}
+
+impl SparseNullifierMap {
+    pub fn root(&self) -> [u8; 32] {
+        self.value(NULLIFIER_TREE_DEPTH, 0)
+    }
+
+    pub fn empty_path(&self, index: u32) -> Result<[[u8; 32]; NULLIFIER_TREE_DEPTH], PolicyError> {
+        if self.value(0, index) != empty_leaf() {
+            return Err(PolicyError::C5Nullifier);
+        }
+        let mut path = [[0_u8; 32]; NULLIFIER_TREE_DEPTH];
+        for (depth, sibling) in path.iter_mut().enumerate() {
+            *sibling = self.value(depth, (index >> depth) ^ 1);
+        }
+        Ok(path)
+    }
+
+    pub fn insert(&mut self, index: u32) -> Result<(), PolicyError> {
+        if self.value(0, index) != empty_leaf() {
+            return Err(PolicyError::C5Nullifier);
+        }
+
+        let defaults = nullifier_empty_hashes();
+        let mut current = used_leaf();
+        let mut node_index = index;
+        self.nodes.insert((0, node_index), current);
+        for depth in 0..NULLIFIER_TREE_DEPTH {
+            let sibling = self.value(depth, node_index ^ 1);
+            current = if node_index & 1 == 0 {
+                nullifier_parent(current, sibling)
+            } else {
+                nullifier_parent(sibling, current)
+            };
+            node_index >>= 1;
+            if current == defaults[depth + 1] {
+                self.nodes.remove(&(depth + 1, node_index));
+            } else {
+                self.nodes.insert((depth + 1, node_index), current);
+            }
+        }
+        Ok(())
+    }
+
+    fn value(&self, depth: usize, index: u32) -> [u8; 32] {
+        self.nodes
+            .get(&(depth, index))
+            .copied()
+            .unwrap_or_else(|| nullifier_empty_hashes()[depth])
+    }
+}
+
+fn nullifier_empty_hashes() -> [[u8; 32]; NULLIFIER_TREE_DEPTH + 1] {
+    let mut hashes = [[0_u8; 32]; NULLIFIER_TREE_DEPTH + 1];
+    hashes[0] = empty_leaf();
+    for depth in 0..NULLIFIER_TREE_DEPTH {
+        hashes[depth + 1] = nullifier_parent(hashes[depth], hashes[depth]);
+    }
+    hashes
+}
+
 fn credential_root(
     mut index: usize,
     event: &EpcisEventV1,
@@ -408,6 +479,14 @@ fn empty_leaf() -> [u8; 32] {
 
 fn used_leaf() -> [u8; 32] {
     hash_parts(&[b"EUDR:E2E:C5:LEAF:V1", &[1]])
+}
+
+fn nullifier_hash(lot_id: u64, nullifier_secret: [u8; 32]) -> [u8; 32] {
+    hash_parts(&[
+        b"EUDR:E2E:NULLIFIER:V1",
+        &lot_id.to_be_bytes(),
+        &nullifier_secret,
+    ])
 }
 
 fn nullifier_parent(left: [u8; 32], right: [u8; 32]) -> [u8; 32] {
@@ -624,5 +703,27 @@ mod tests {
     #[test]
     fn default_nullifier_root_is_deterministic() {
         assert_eq!(nullifier_default_root(), nullifier_default_root());
+    }
+
+    #[test]
+    fn sparse_nullifier_map_chains_three_private_witnesses() {
+        let indices = [
+            nullifier_index(1, [1; 32]),
+            nullifier_index(2, [2; 32]),
+            nullifier_index(3, [3; 32]),
+        ];
+        let mut map = SparseNullifierMap::default();
+        assert_eq!(map.root(), nullifier_default_root());
+
+        for index in indices {
+            let old_root = map.root();
+            let path = map.empty_path(index).unwrap();
+            assert_eq!(sparse_root(index, empty_leaf(), &path), old_root);
+            let expected_new_root = sparse_root(index, used_leaf(), &path);
+            map.insert(index).unwrap();
+            assert_eq!(map.root(), expected_new_root);
+        }
+
+        assert_eq!(map.empty_path(indices[1]), Err(PolicyError::C5Nullifier));
     }
 }

@@ -1,15 +1,110 @@
+pub mod http;
+
 use ed25519_dalek::{Signer, SigningKey};
+pub use eudr_policy::EventWitness;
 use eudr_policy::{
     certificate_leaf, certificate_padding_leaf, certificate_parent, evaluate,
-    nullifier_default_path, nullifier_default_root, EpcisEventV1, EventWitness, PointE6,
-    PolicyError, PolicyInput, CERTIFICATE_TREE_DEPTH, MAX_EVENTS,
+    nullifier_default_path, nullifier_default_root, EpcisEventV1, PointE6, PolicyError,
+    PolicyInput, CERTIFICATE_TREE_DEPTH, MAX_EVENTS,
 };
+use sha2::{Digest, Sha256};
 use sp1_sdk::{
     blocking::{ProveRequest, Prover, ProverClient},
     include_elf, Elf, HashableKey, ProvingKey, SP1ProofWithPublicValues, SP1Stdin,
 };
 
 pub const EUDR_POLICY_ELF: Elf = include_elf!("eudr-policy-program");
+
+/// Synthetic but canonical signed events for one benchmark lot.
+/// The seed only derives fixture keys; every proof still verifies the actual Ed25519 signatures.
+pub fn benchmark_events_for_lot(
+    seed: u64,
+    epoch_id: u64,
+    lot_id: u64,
+    first_event_id: u64,
+    event_count: usize,
+) -> Result<Vec<EventWitness>, String> {
+    if !(eudr_policy::MIN_EVENTS..=MAX_EVENTS).contains(&event_count) {
+        return Err(format!(
+            "benchmark lot size {event_count} is outside 8..=64"
+        ));
+    }
+
+    (0..event_count)
+        .map(|offset| {
+            let event_id = first_event_id + offset as u64;
+            let mut key_material = Sha256::new();
+            key_material.update(b"EUDR:E2:BENCHMARK:ED25519:V1");
+            key_material.update(seed.to_be_bytes());
+            key_material.update(event_id.to_be_bytes());
+            let signing_key = SigningKey::from_bytes(&key_material.finalize().into());
+            let event = EpcisEventV1 {
+                event_id,
+                lot_id,
+                epoch_id,
+                timestamp_ms: 1_700_000_000_000 + event_id * 15_000,
+                readings: 800 + (event_id % 101) as u32,
+                // C1 proves the event is outside the committed forbidden polygon.
+                latitude_e6: 10_830_000 + (offset % 100) as i32,
+                longitude_e6: 106_760_000 + (offset % 100) as i32,
+                certificate_id: 10_000_000 + event_id,
+                role: eudr_policy::REQUIRED_ROLE,
+                actor_public_key: signing_key.verifying_key().to_bytes(),
+            };
+            let event_bytes = event.canonical_bytes();
+            Ok(EventWitness {
+                event_bytes,
+                signature: signing_key.sign(&event_bytes).to_bytes(),
+                certificate_path: [[0_u8; 32]; CERTIFICATE_TREE_DEPTH],
+            })
+        })
+        .collect()
+}
+
+/// Binds already-ingested canonical bytes to the private policy witness.
+pub fn policy_input_from_events(
+    epoch_id: u64,
+    lot_id: u64,
+    mut events: Vec<EventWitness>,
+    old_nullifier_root: [u8; 32],
+    nullifier_secret: [u8; 32],
+    nullifier_path: [[u8; 32]; eudr_policy::NULLIFIER_TREE_DEPTH],
+) -> Result<PolicyInput, String> {
+    let decoded_events = events
+        .iter()
+        .map(|witness| {
+            let event = eudr_policy::decode_event(&witness.event_bytes)
+                .map_err(|error| format!("decode benchmark event: {error:?}"))?;
+            if event.epoch_id != epoch_id || event.lot_id != lot_id {
+                return Err("benchmark event does not match its assigned lot or epoch".to_string());
+            }
+            Ok(event)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let (certificate_root, certificate_paths) = certificate_tree(&decoded_events);
+    for (witness, certificate_path) in events.iter_mut().zip(certificate_paths) {
+        witness.certificate_path = certificate_path;
+    }
+
+    Ok(PolicyInput {
+        epoch_id,
+        lot_id,
+        polygon: forbidden_polygon(),
+        certificate_root,
+        old_nullifier_root,
+        nullifier_secret,
+        nullifier_path,
+        events,
+    })
+}
+
+pub fn benchmark_nullifier_secret(seed: u64, lot_id: u64) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"EUDR:E2:BENCHMARK:NULLIFIER:V1");
+    hasher.update(seed.to_be_bytes());
+    hasher.update(lot_id.to_be_bytes());
+    hasher.finalize().into()
+}
 
 pub fn valid_input() -> PolicyInput {
     fixture_input(20260823, 1)
@@ -19,28 +114,7 @@ pub fn valid_input() -> PolicyInput {
 /// The E2E smoke uses unique identifiers so Fabric rejects accidental replays.
 pub fn fixture_input(epoch_id: u64, first_event_id: u64) -> PolicyInput {
     let lot_id = 17;
-    let polygon = vec![
-        PointE6 {
-            latitude_e6: 10_760_000,
-            longitude_e6: 106_660_000,
-        },
-        PointE6 {
-            latitude_e6: 10_780_000,
-            longitude_e6: 106_650_000,
-        },
-        PointE6 {
-            latitude_e6: 10_800_000,
-            longitude_e6: 106_680_000,
-        },
-        PointE6 {
-            latitude_e6: 10_785_000,
-            longitude_e6: 106_720_000,
-        },
-        PointE6 {
-            latitude_e6: 10_765_000,
-            longitude_e6: 106_710_000,
-        },
-    ];
+    let polygon = forbidden_polygon();
     let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
     let mut decoded_events = Vec::new();
     let mut signatures = Vec::new();
@@ -85,6 +159,31 @@ pub fn fixture_input(epoch_id: u64, first_event_id: u64) -> PolicyInput {
     }
 }
 
+fn forbidden_polygon() -> Vec<PointE6> {
+    vec![
+        PointE6 {
+            latitude_e6: 10_760_000,
+            longitude_e6: 106_660_000,
+        },
+        PointE6 {
+            latitude_e6: 10_780_000,
+            longitude_e6: 106_650_000,
+        },
+        PointE6 {
+            latitude_e6: 10_800_000,
+            longitude_e6: 106_680_000,
+        },
+        PointE6 {
+            latitude_e6: 10_785_000,
+            longitude_e6: 106_720_000,
+        },
+        PointE6 {
+            latitude_e6: 10_765_000,
+            longitude_e6: 106_710_000,
+        },
+    ]
+}
+
 pub fn prove(input: &PolicyInput) -> Result<SP1ProofWithPublicValues, String> {
     Ok(prove_internal(input)?.0)
 }
@@ -98,16 +197,24 @@ pub fn prove_evm_fixture(input: &PolicyInput) -> Result<String, String> {
     ))
 }
 
-fn prove_internal(input: &PolicyInput) -> Result<(SP1ProofWithPublicValues, String), String> {
+/// Initialisation is deliberately outside the timed proof window in E2.
+/// The same proving key is reused for every independently proven lot.
+pub fn setup_policy_prover<P: Prover>(client: &P) -> Result<P::ProvingKey, String> {
+    client
+        .setup(EUDR_POLICY_ELF)
+        .map_err(|error| format!("SP1 policy setup failed: {error}"))
+}
+
+pub fn prove_with<P: Prover>(
+    client: &P,
+    proving_key: &P::ProvingKey,
+    input: &PolicyInput,
+) -> Result<SP1ProofWithPublicValues, String> {
     let expected = evaluate(input).map_err(policy_error)?;
     let mut stdin = SP1Stdin::new();
     stdin.write(&input.encode().map_err(policy_error)?);
-    let client = ProverClient::builder().cpu().build();
-    let proving_key = client
-        .setup(EUDR_POLICY_ELF)
-        .map_err(|error| format!("SP1 setup failed: {error}"))?;
     let proof = client
-        .prove(&proving_key, stdin)
+        .prove(proving_key, stdin)
         .groth16()
         .run()
         .map_err(|error| format!("SP1 Groth16 proving failed: {error}"))?;
@@ -117,6 +224,27 @@ fn prove_internal(input: &PolicyInput) -> Result<(SP1ProofWithPublicValues, Stri
     if proof.public_values.as_slice() != expected.abi_encode() {
         return Err("guest public values do not match host policy evaluation".to_string());
     }
+    Ok(proof)
+}
+
+pub fn prove_evm_fixture_with<P: Prover>(
+    client: &P,
+    proving_key: &P::ProvingKey,
+    input: &PolicyInput,
+) -> Result<String, String> {
+    let proof = prove_with(client, proving_key, input)?;
+    Ok(format!(
+        "{{\n  \"vkey\": \"{}\",\n  \"publicValues\": \"0x{}\",\n  \"proof\": \"0x{}\"\n}}\n",
+        proving_key.verifying_key().bytes32(),
+        hex::encode(proof.public_values.as_slice()),
+        hex::encode(proof.bytes())
+    ))
+}
+
+fn prove_internal(input: &PolicyInput) -> Result<(SP1ProofWithPublicValues, String), String> {
+    let client = ProverClient::builder().cpu().build();
+    let proving_key = setup_policy_prover(&client)?;
+    let proof = prove_with(&client, &proving_key, input)?;
     Ok((proof, proving_key.verifying_key().bytes32().to_string()))
 }
 
@@ -186,6 +314,22 @@ mod tests {
             input.events[0].event_bytes[1..9],
             9_000_000_100_u64.to_be_bytes()
         );
+    }
+
+    #[test]
+    fn benchmark_lot_binds_all_canonical_events_to_the_policy_input() {
+        let events = benchmark_events_for_lot(7, 70, 71, 7_000, 16).unwrap();
+        let input = policy_input_from_events(
+            70,
+            71,
+            events,
+            nullifier_default_root(),
+            benchmark_nullifier_secret(7, 71),
+            nullifier_default_path(),
+        )
+        .unwrap();
+        assert_eq!(input.events.len(), 16);
+        assert_eq!(evaluate(&input).unwrap().event_count, 16);
     }
 
     #[test]
