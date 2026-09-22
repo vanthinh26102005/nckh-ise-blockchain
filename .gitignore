@@ -6,3 +6,7 @@
 # Ignore large raw benchmark CSV files (>100MB)
 *raw.csv
 results/**/raw.csv
+results/**/raw.jsonl
+results/e2/real/
+__pycache__/
+infra/fabric/raft/runtime/

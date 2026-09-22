@@ -9,9 +9,14 @@ default-run = "sp1-e2e"
 name = "sp1-e2e"
 path = "src/bin/main.rs"
 
+[features]
+cuda = ["sp1-sdk/cuda", "sp1-sdk/groth16-cuda"]
+
 [dependencies]
 anyhow = "1"
 base64 = "0.22"
+clap = { version = "4.4", features = ["derive"] }
+e2-bench = { path = "../../e2-bench" }
 eudr-policy = { path = "../policy" }
 ed25519-dalek.workspace = true
 hex = "0.4"

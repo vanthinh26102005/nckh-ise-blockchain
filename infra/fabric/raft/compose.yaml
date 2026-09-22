@@ -1,0 +1,135 @@
+name: e2raft
+
+x-orderer: &orderer
+  image: hyperledger/fabric-orderer:2.5.8
+  command: orderer
+  environment: &orderer-environment
+    FABRIC_LOGGING_SPEC: INFO
+    ORDERER_GENERAL_LISTENADDRESS: 0.0.0.0
+    ORDERER_GENERAL_LISTENPORT: 7050
+    ORDERER_GENERAL_LOCALMSPID: OrdererMSP
+    ORDERER_GENERAL_LOCALMSPDIR: /var/hyperledger/orderer/msp
+    ORDERER_GENERAL_TLS_ENABLED: "true"
+    ORDERER_GENERAL_TLS_PRIVATEKEY: /var/hyperledger/orderer/tls/server.key
+    ORDERER_GENERAL_TLS_CERTIFICATE: /var/hyperledger/orderer/tls/server.crt
+    ORDERER_GENERAL_TLS_ROOTCAS: "[/var/hyperledger/orderer/tls/ca.crt]"
+    ORDERER_GENERAL_CLUSTER_CLIENTCERTIFICATE: /var/hyperledger/orderer/tls/server.crt
+    ORDERER_GENERAL_CLUSTER_CLIENTPRIVATEKEY: /var/hyperledger/orderer/tls/server.key
+    ORDERER_GENERAL_CLUSTER_ROOTCAS: "[/var/hyperledger/orderer/tls/ca.crt]"
+    ORDERER_GENERAL_BOOTSTRAPMETHOD: none
+    ORDERER_CHANNELPARTICIPATION_ENABLED: "true"
+    ORDERER_ADMIN_TLS_ENABLED: "true"
+    ORDERER_ADMIN_TLS_CERTIFICATE: /var/hyperledger/orderer/tls/server.crt
+    ORDERER_ADMIN_TLS_PRIVATEKEY: /var/hyperledger/orderer/tls/server.key
+    ORDERER_ADMIN_TLS_ROOTCAS: "[/var/hyperledger/orderer/tls/ca.crt]"
+    ORDERER_ADMIN_TLS_CLIENTROOTCAS: "[/var/hyperledger/orderer/tls/ca.crt]"
+  networks: [e2-fabric]
+
+x-peer: &peer
+  image: hyperledger/fabric-peer:2.5.8
+  command: peer node start
+  environment: &peer-environment
+    FABRIC_LOGGING_SPEC: INFO
+    CORE_PEER_TLS_ENABLED: "true"
+    CORE_PEER_TLS_CERT_FILE: /etc/hyperledger/fabric/tls/server.crt
+    CORE_PEER_TLS_KEY_FILE: /etc/hyperledger/fabric/tls/server.key
+    CORE_PEER_TLS_ROOTCERT_FILE: /etc/hyperledger/fabric/tls/ca.crt
+    CORE_VM_ENDPOINT: unix:///host/var/run/docker.sock
+    CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE: e2-fabric
+    CORE_CHAINCODE_EXECUTETIMEOUT: 300s
+  networks: [e2-fabric]
+
+services:
+  orderer1.example.com:
+    <<: *orderer
+    container_name: e2-orderer1.example.com
+    environment:
+      <<: *orderer-environment
+      ORDERER_ADMIN_LISTENADDRESS: 0.0.0.0:7053
+      ORDERER_OPERATIONS_LISTENADDRESS: orderer1.example.com:9443
+    volumes:
+      - ./runtime/organizations/ordererOrganizations/example.com/orderers/orderer1.example.com/msp:/var/hyperledger/orderer/msp
+      - ./runtime/organizations/ordererOrganizations/example.com/orderers/orderer1.example.com/tls:/var/hyperledger/orderer/tls
+      - e2-orderer1:/var/hyperledger/production/orderer
+    ports: ["7050:7050", "7053:7053"]
+
+  orderer2.example.com:
+    <<: *orderer
+    container_name: e2-orderer2.example.com
+    environment:
+      <<: *orderer-environment
+      ORDERER_ADMIN_LISTENADDRESS: 0.0.0.0:7053
+      ORDERER_OPERATIONS_LISTENADDRESS: orderer2.example.com:9443
+    volumes:
+      - ./runtime/organizations/ordererOrganizations/example.com/orderers/orderer2.example.com/msp:/var/hyperledger/orderer/msp
+      - ./runtime/organizations/ordererOrganizations/example.com/orderers/orderer2.example.com/tls:/var/hyperledger/orderer/tls
+      - e2-orderer2:/var/hyperledger/production/orderer
+    ports: ["8050:7050", "8053:7053"]
+
+  orderer3.example.com:
+    <<: *orderer
+    container_name: e2-orderer3.example.com
+    environment:
+      <<: *orderer-environment
+      ORDERER_ADMIN_LISTENADDRESS: 0.0.0.0:7053
+      ORDERER_OPERATIONS_LISTENADDRESS: orderer3.example.com:9443
+    volumes:
+      - ./runtime/organizations/ordererOrganizations/example.com/orderers/orderer3.example.com/msp:/var/hyperledger/orderer/msp
+      - ./runtime/organizations/ordererOrganizations/example.com/orderers/orderer3.example.com/tls:/var/hyperledger/orderer/tls
+      - e2-orderer3:/var/hyperledger/production/orderer
+    ports: ["9050:7050", "9053:7053"]
+
+  peer0.org1.example.com:
+    <<: *peer
+    container_name: e2-peer0.org1.example.com
+    environment:
+      <<: *peer-environment
+      CORE_PEER_ID: peer0.org1.example.com
+      CORE_PEER_ADDRESS: peer0.org1.example.com:7051
+      CORE_PEER_LISTENADDRESS: 0.0.0.0:7051
+      CORE_PEER_CHAINCODEADDRESS: peer0.org1.example.com:7052
+      CORE_PEER_CHAINCODELISTENADDRESS: 0.0.0.0:7052
+      CORE_PEER_GOSSIP_BOOTSTRAP: peer0.org1.example.com:7051
+      CORE_PEER_GOSSIP_EXTERNALENDPOINT: peer0.org1.example.com:7051
+      CORE_PEER_LOCALMSPID: Org1MSP
+      CORE_PEER_MSPCONFIGPATH: /etc/hyperledger/fabric/msp
+      CORE_OPERATIONS_LISTENADDRESS: peer0.org1.example.com:9443
+    volumes:
+      - ./runtime/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/msp:/etc/hyperledger/fabric/msp
+      - ./runtime/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls:/etc/hyperledger/fabric/tls
+      - /var/run/docker.sock:/host/var/run/docker.sock
+      - e2-peer0-org1:/var/hyperledger/production
+    ports: ["7051:7051"]
+
+  peer0.org2.example.com:
+    <<: *peer
+    container_name: e2-peer0.org2.example.com
+    environment:
+      <<: *peer-environment
+      CORE_PEER_ID: peer0.org2.example.com
+      CORE_PEER_ADDRESS: peer0.org2.example.com:7051
+      CORE_PEER_LISTENADDRESS: 0.0.0.0:7051
+      CORE_PEER_CHAINCODEADDRESS: peer0.org2.example.com:7052
+      CORE_PEER_CHAINCODELISTENADDRESS: 0.0.0.0:7052
+      CORE_PEER_GOSSIP_BOOTSTRAP: peer0.org2.example.com:7051
+      CORE_PEER_GOSSIP_EXTERNALENDPOINT: peer0.org2.example.com:7051
+      CORE_PEER_LOCALMSPID: Org2MSP
+      CORE_PEER_MSPCONFIGPATH: /etc/hyperledger/fabric/msp
+      CORE_OPERATIONS_LISTENADDRESS: peer0.org2.example.com:9443
+    volumes:
+      - ./runtime/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/msp:/etc/hyperledger/fabric/msp
+      - ./runtime/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls:/etc/hyperledger/fabric/tls
+      - /var/run/docker.sock:/host/var/run/docker.sock
+      - e2-peer0-org2:/var/hyperledger/production
+    ports: ["9051:7051"]
+
+networks:
+  e2-fabric:
+    name: e2-fabric
+
+volumes:
+  e2-orderer1:
+  e2-orderer2:
+  e2-orderer3:
+  e2-peer0-org1:
+  e2-peer0-org2:
