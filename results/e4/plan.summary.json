@@ -1,0 +1,15 @@
+{
+  "phases": {
+    "screening": {
+      "cells": 80,
+      "seeds_per_cell": 1,
+      "runs": 80
+    },
+    "confirmation": {
+      "cells": 27,
+      "seeds_per_cell": 10,
+      "runs": 270
+    }
+  },
+  "runs_total": 350
+}

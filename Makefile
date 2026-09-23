@@ -1,4 +1,5 @@
-.PHONY: bootstrap test e1 e1-quick e1-strict e2 e2-quick e2-strict figs clean-results clean-e2
+.PHONY: bootstrap test e1 e1-quick e1-strict e2 e2-quick e2-strict figs clean-results clean-e2 \
+	e4-plan e4-run-mock e4-analyze-mock e4-run e4-analyze e4-test clean-e4
 
 bootstrap:
 	@bash scripts/bootstrap.sh
@@ -45,3 +46,39 @@ clean-results:
 
 clean-e2:
 	rm -rf results/e2/quick results/e2/strict results/e2/full
+
+# ---- E4 scalability sweep (proposed system) ----
+# Plan generation and mock self-test do NOT depend on E3. The real run (e4-run) is
+# blocked until the E3 aggregate proof gate passes (RealE3Executor stub in e4_run.py).
+
+e4-test:
+	python3 scripts/test_e4.py
+
+e4-plan:
+	python3 scripts/e4_plan.py --phase all --out results/e4/plan.csv --summary-out results/e4/plan.summary.json
+
+# Harness/schema/analysis self-test via the mock executor. NOT valid E4 evidence.
+e4-run-mock: e4-plan
+	@mkdir -p results/e4/screening
+	python3 scripts/e4_run.py --plan results/e4/plan.csv --phase screening --executor mock \
+		--out results/e4/screening/raw.jsonl --manifest-out results/e4/screening/manifest.json \
+		--created-at "$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" --git-commit "$(shell git rev-parse --short HEAD)" \
+		--command "make e4-run-mock"
+
+e4-analyze-mock:
+	python3 scripts/e4_analyze.py --raw results/e4/screening/raw.jsonl \
+		--manifest results/e4/screening/manifest.json --out-dir results/e4/screening
+
+# Official E4 run — requires E3 gate. Wire RealE3Executor first; then use --executor real-e3.
+e4-run:
+	@echo "e4-run is blocked until the E3 aggregate proof gate passes and RealE3Executor is wired."
+	@echo "Then: python3 scripts/e4_run.py --plan results/e4/plan.csv --phase confirmation --executor real-e3 ..."
+	@exit 1
+
+e4-analyze:
+	python3 scripts/e4_analyze.py --raw results/e4/confirmation/raw.jsonl \
+		--manifest results/e4/confirmation/manifest.json --out-dir results/e4/confirmation \
+		--require-real --require-single-host
+
+clean-e4:
+	rm -rf results/e4/screening results/e4/confirmation results/e4/plan.csv results/e4/plan.summary.json
