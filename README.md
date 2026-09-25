@@ -197,3 +197,18 @@ cargo run --release -p e2-bench -- \
 ```
 
 `crates/e2-bench/` không gọi Fabric, SP1 hay RPC Anvil; nó là historical artifact tách biệt với `crates/sp1-e2e/script/src/bin/e2_real_benchmark.rs`.
+
+## E3/E4 — recursion, baseline comparison và scalability
+
+E3 có [recursive epoch gate](docs/reports/e3_recursive_gate.md) và
+[phương pháp so sánh bốn baseline](docs/reports/e3_methodology.md). VeCroToken
+ở đây là **bản chuyển thể SP1 + token anchor**, không phải reproduction của
+giao thức gốc. E4 có [grid 80 screening + 270 confirmation runs](docs/reports/e4_methodology.md),
+runner thật và analyzer kiểm tra đủ run/receipt. `make e3-check` và
+`make e4-test` chạy các kiểm tra nhanh; `make e4-plan` sinh plan deterministic.
+
+Gate/baseline/preflight phải chạy trên compute node có Fabric, Anvil và GPU
+được cấp qua Slurm. Proof fixture, raw JSONL và runtime state đặt **ngoài
+Git**; chỉ commit metadata và báo cáo sau khi xác thực. Hiện repo chưa có bộ
+E3 30-seed hoặc E4 350-run GPU chính thức, nên không cập nhật `paper.tex`
+bằng số liệu pilot/mock.

@@ -15,6 +15,9 @@ const compilerInput = {
   language: "Solidity",
   sources: Object.fromEntries(await Promise.all([
     "EpochAnchor.sol",
+    "EpochAggregateAnchor.sol",
+    "ShipmentHashAnchor.sol",
+    "VeCroTokenAdaptedAnchor.sol",
     "sp1/ISP1Verifier.sol",
     "sp1/Groth16Verifier.sol",
     "sp1/SP1VerifierGroth16.sol",
@@ -35,6 +38,11 @@ const coder = AbiCoder.defaultAbiCoder();
 let verifier;
 let anchor;
 let anchorVKey;
+let epochAnchor;
+let epochVKey;
+let shipmentHashAnchor;
+let adaptedTokenAnchor;
+let adaptedPolicyVKey;
 
 const deploy = async (source, contract, ...args) => {
   const compiled = artifact(source, contract);
@@ -69,8 +77,9 @@ const readJSON = async (request) => {
 };
 
 const send = (response, status, value) => {
-  response.writeHead(status, { "content-type": "application/json" });
-  response.end(`${JSON.stringify(value)}\n`);
+  const body = `${JSON.stringify(value)}\n`;
+  response.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(body) });
+  response.end(body);
 };
 
 const anchorProof = async (body) => {
@@ -104,6 +113,76 @@ const anchorProof = async (body) => {
   };
 };
 
+const deployEpochAnchor = async (body) => {
+  const root = bytes32(body.initialNullifierRoot, "initialNullifierRoot");
+  const vkey = bytes32(body.programVKey, "programVKey");
+  const leafDigest = bytes32(body.leafVKeyDigest, "leafVKeyDigest");
+  const aggregateDigest = bytes32(body.aggregateVKeyDigest, "aggregateVKeyDigest");
+  verifier ??= await deploy("contracts/sp1/SP1VerifierGroth16.sol", "SP1Verifier");
+  epochAnchor = await deploy("contracts/EpochAggregateAnchor.sol", "EpochAggregateAnchor",
+    await verifier.getAddress(), vkey, leafDigest, aggregateDigest, root);
+  epochVKey = vkey;
+  return epochAnchor;
+};
+
+const anchorEpochProof = async (body) => {
+  const epochId = BigInt(String(body.epochId));
+  const expectedRoot = bytes32(body.oldNullifierRoot, "oldNullifierRoot");
+  const vkey = bytes32(body.programVKey, "programVKey");
+  if (!epochAnchor || epochVKey !== vkey) throw new Error("E3 anchor has not been reset with this programVKey");
+  if (typeof body.publicValues !== "string" || typeof body.proof !== "string") {
+    throw new Error("publicValues and proof must be hex strings");
+  }
+  const [provedEpoch, provedRoot, newRoot] = coder.decode(
+    ["uint64", "bytes32", "bytes32"], body.publicValues);
+  if (provedEpoch !== epochId || provedRoot.toLowerCase() !== expectedRoot) {
+    throw new Error("requested epoch or root disagrees with aggregate public values");
+  }
+  const tx = await epochAnchor.verifyAndAnchor(epochId, expectedRoot, body.publicValues, body.proof);
+  const receipt = await tx.wait();
+  if (receipt.status !== 1 || (await epochAnchor.nullifierRoot()).toLowerCase() !== newRoot.toLowerCase()) {
+    throw new Error("Anvil did not apply the proved epoch root");
+  }
+  return {
+    epochId: epochId.toString(), transactionHash: receipt.hash,
+    gasUsed: receipt.gasUsed.toString(), calldataBytes: (tx.data.length - 2) / 2,
+    newNullifierRoot: newRoot.toLowerCase(),
+  };
+};
+
+const anchorShipmentHash = async (body) => {
+  if (!shipmentHashAnchor) throw new Error("hash baseline has not been reset");
+  const shipmentId = BigInt(String(body.shipmentId));
+  const digest = bytes32(body.digest, "digest");
+  const eventCount = Number(body.eventCount);
+  if (!Number.isInteger(eventCount) || eventCount < 1 || eventCount > 128) {
+    throw new Error("eventCount must be 1..128");
+  }
+  const tx = await shipmentHashAnchor.anchor(shipmentId, digest, eventCount);
+  const receipt = await tx.wait();
+  if (receipt.status !== 1 || (await shipmentHashAnchor.shipmentDigests(shipmentId)).toLowerCase() !== digest) {
+    throw new Error("Anvil did not store the shipment digest");
+  }
+  return { shipmentId: shipmentId.toString(), transactionHash: receipt.hash,
+    gasUsed: receipt.gasUsed.toString(), calldataBytes: (tx.data.length - 2) / 2 };
+};
+
+const mintAdaptedToken = async (body) => {
+  if (!adaptedTokenAnchor) throw new Error("adapted token baseline has not been reset");
+  if (bytes32(body.programVKey, "programVKey") !== adaptedPolicyVKey) {
+    throw new Error("policy program vkey changed");
+  }
+  if (typeof body.publicValues !== "string" || typeof body.proof !== "string") {
+    throw new Error("publicValues and proof must be hex strings");
+  }
+  const tx = await adaptedTokenAnchor.verifyAndMint(body.publicValues, body.proof);
+  const receipt = await tx.wait();
+  if (receipt.status !== 1) throw new Error("adapted token transaction failed");
+  return { transactionHash: receipt.hash, gasUsed: receipt.gasUsed.toString(),
+    calldataBytes: (tx.data.length - 2) / 2,
+    newNullifierRoot: (await adaptedTokenAnchor.nullifierRoot()).toLowerCase() };
+};
+
 const server = createServer(async (request, response) => {
   try {
     if (request.method === "GET" && request.url === "/health") {
@@ -114,6 +193,25 @@ const server = createServer(async (request, response) => {
       send(response, 201, { status: "reset", anchor: await anchor.getAddress() });
     } else if (request.method === "POST" && request.url === "/anchor") {
       send(response, 201, await anchorProof(await readJSON(request)));
+    } else if (request.method === "POST" && request.url === "/e3/reset") {
+      const anchor = await deployEpochAnchor(await readJSON(request));
+      send(response, 201, { status: "reset", anchor: await anchor.getAddress() });
+    } else if (request.method === "POST" && request.url === "/e3/anchor") {
+      send(response, 201, await anchorEpochProof(await readJSON(request)));
+    } else if (request.method === "POST" && request.url === "/e3/hash/reset") {
+      shipmentHashAnchor = await deploy("contracts/ShipmentHashAnchor.sol", "ShipmentHashAnchor");
+      send(response, 201, { status: "reset", anchor: await shipmentHashAnchor.getAddress() });
+    } else if (request.method === "POST" && request.url === "/e3/hash/anchor") {
+      send(response, 201, await anchorShipmentHash(await readJSON(request)));
+    } else if (request.method === "POST" && request.url === "/e3/vecro/reset") {
+      const body = await readJSON(request);
+      adaptedPolicyVKey = bytes32(body.programVKey, "programVKey");
+      verifier ??= await deploy("contracts/sp1/SP1VerifierGroth16.sol", "SP1Verifier");
+      adaptedTokenAnchor = await deploy("contracts/VeCroTokenAdaptedAnchor.sol", "VeCroTokenAdaptedAnchor",
+        await verifier.getAddress(), adaptedPolicyVKey, bytes32(body.initialNullifierRoot, "initialNullifierRoot"));
+      send(response, 201, { status: "reset", anchor: await adaptedTokenAnchor.getAddress() });
+    } else if (request.method === "POST" && request.url === "/e3/vecro/mint") {
+      send(response, 201, await mintAdaptedToken(await readJSON(request)));
     } else {
       send(response, 404, { error: "not found" });
     }

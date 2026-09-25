@@ -7,9 +7,8 @@ writing one cell-result JSONL line per run plus a committed run manifest.
 Two executors:
   * mock   -- deterministic synthetic metrics; harness/schema/analysis self-test only.
               NOT valid E4 evidence.
-  * real-e3 -- STUB. Plugs into the E3 aggregate proof pipeline
-              (Fabric -> leaf proofs -> SP1 aggregate -> Anvil receipt) once the E3
-              gate passes. See RealE3Executor below (handoff with Hữu Trí).
+  * real-e3 -- invokes the Rust E3 cell binary (Fabric -> compressed leaves ->
+               recursive SP1 aggregate -> Anvil receipt).
 
 Measurement rules enforced here (issue #22):
   * Each run targets exactly 4 complete epochs.
@@ -26,8 +25,11 @@ import csv
 import json
 import math
 import random
+import socket
+import subprocess
 import statistics
 from pathlib import Path
+from urllib.parse import urlparse
 
 LAMBDA_EVENTS_PER_MIN = 3.84
 EPOCHS_TARGET = 4
@@ -36,17 +38,21 @@ EPOCHS_TARGET = 4
 # ----------------------------- workload -----------------------------------
 
 def poisson_event_count(rng, expected):
-    """Knuth's algorithm for a Poisson sample (stdlib only)."""
+    """Exact Poisson sample, chunked so exp(-lambda) never underflows."""
     if expected <= 0:
         return 0
-    l = math.exp(-expected)
-    k = 0
-    p = 1.0
-    while True:
-        k += 1
-        p *= rng.random()
-        if p <= l:
-            return k - 1
+    total = 0
+    while expected > 0:
+        chunk = min(expected, 64.0)
+        threshold = math.exp(-chunk)
+        product = 1.0
+        count = 0
+        while product > threshold:
+            product *= rng.random()
+            count += 1
+        total += count - 1
+        expected -= chunk
+    return total
 
 
 def generate_offered_events(seed, np_, epoch_s, epochs):
@@ -69,8 +75,8 @@ def generate_offered_events(seed, np_, epoch_s, epochs):
 def stat(values):
     values = [float(v) for v in values]
     if not values:
-        return {"count": 0, "mean": 0.0, "p50": 0.0, "p95": 0.0,
-                "p99": None, "min": None, "max": None, "sum": 0.0}
+        return {"count": 0, "mean": None, "p50": None, "p95": None,
+                "p99": None, "min": None, "max": None, "sum": None}
     s = sorted(values)
 
     def pct(p):
@@ -186,30 +192,58 @@ class MockExecutor:
 
 
 class RealE3Executor:
-    """Official E4 executor. BLOCKED until the E3 aggregate proof gate passes.
-
-    Integration seam (handoff with Hữu Trí — do NOT redefine proof/root format here):
-      1. Generate the Poisson workload for (seed, np, epoch_s, 4 epochs).
-      2. Ingest events into Fabric (2 org / 2 peer / 3 Raft orderer) via Gateway.
-      3. Form lots of `shipment` events; produce leaf proofs.
-      4. Produce the SP1 aggregate proof using E3's public-values / ABI / manifest.
-      5. Submit to Anvil; record real receipt, gas, calldata bytes.
-      6. On stop: drain the queue; on wall-time: mark 'saturated'.
-    """
+    """Official E4 executor; the Rust binary owns the proof and receipt format."""
 
     name = "real-e3"
 
-    def __init__(self, wall_time_s=None, split_host=False, e3_manifest_ref=None):
+    def __init__(self, wall_time_s=None, split_host=False, e3_manifest_ref=None,
+                 binary=None, fabric_gateway=None, anchor_server=None, prover="cpu"):
         self.wall_time_s = wall_time_s
         self.split_host = split_host
         self.e3_manifest_ref = e3_manifest_ref
+        self.binary = binary
+        self.fabric_gateway = fabric_gateway
+        self.anchor_server = anchor_server
+        self.prover = prover
 
     def run(self, row):
-        raise NotImplementedError(
-            "RealE3Executor is blocked until the E3 aggregate proof gate passes "
-            "(Fabric -> leaf proofs -> SP1 aggregate -> Anvil receipt). "
-            "Wire this to the E3 pipeline using E3's manifest/public-values/ABI."
-        )
+        wall = self.wall_time_s
+        command = [str(self.binary), "--np", str(row["np"]), "--shipment", str(row["shipment"]),
+                   "--epoch-s", str(row["epoch_s"]), "--seed", str(row["seed"]),
+                   "--wall-time-s", str(math.ceil(wall)), "--prover", self.prover,
+                   "--fabric-gateway", self.fabric_gateway, "--anchor-server", self.anchor_server]
+        try:
+            result = subprocess.run(command, text=True, capture_output=True, check=True,
+                                    timeout=wall + 600)
+            measured = json.loads(result.stdout.strip().splitlines()[-1])
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, IndexError) as exc:
+            measured = {"status": "saturated" if isinstance(exc, subprocess.TimeoutExpired) else "censored",
+                        "censor_reason": str(exc),
+                        "epochs_completed": 0, "queue_drained": False, "elapsed_s": None,
+                        "offered_events": None, "committed_events": None}
+        offered = measured["offered_events"]
+        committed = measured["committed_events"]
+        elapsed = measured["elapsed_s"]
+        return {
+            "status": measured["status"], "censor_reason": measured.get("censor_reason"),
+            "epochs_completed": measured["epochs_completed"],
+            "queue_drained": measured["queue_drained"],
+            "wall_time_s": wall, "elapsed_s": elapsed,
+            "offered_events": offered, "committed_events": committed,
+            "offered_shipments": measured.get("offered_shipments"),
+            "committed_shipments": measured.get("committed_shipments"),
+            "throughput_eps": committed / elapsed if committed is not None and elapsed else None,
+            "completion_rate": committed / offered if committed is not None and offered else None,
+            "leaf_proving_ms": stat(measured.get("leaf_samples", [])),
+            "aggregate_proving_ms": stat(measured.get("aggregate_samples", [])),
+            "audit_latency_ms": stat(measured.get("audit_samples", [])),
+            "gas_used": stat(measured.get("gas_samples", [])),
+            "calldata_bytes": stat(measured.get("calldata_samples", [])),
+            "transactions": measured.get("transactions", []),
+            "split_host": self.split_host, "split_host_rtt_ms": None,
+            "e3_manifest_ref": str(self.e3_manifest_ref),
+            "host": measured.get("host"), "rng": measured.get("rng"),
+        }
 
 
 EXECUTORS = {"mock": MockExecutor, "real-e3": RealE3Executor}
@@ -235,7 +269,7 @@ def build_manifest(phase, rows, executor, args):
     seeds_per_cell = int(rows[0]["seeds_per_cell"])
     return {
         "experiment": "E4",
-        "phase": phase if phase != "all" else "screening",
+        "phase": phase,
         "created_at": args.created_at,
         "command": args.command or "",
         "executor": executor.name,
@@ -252,20 +286,20 @@ def build_manifest(phase, rows, executor, args):
         "split_host_rtt_ms": None,
         "topology": {
             "fabric_orgs": 2,
-            "fabric_peers_per_org": 2,
+            "fabric_peers_per_org": 1,
             "raft_orderers": 3,
             "gateway": "fabric-gateway",
             "l1": "anvil",
             "prover": "mock" if executor.name == "mock" else args.prover,
         },
-        "preflight_ab": None,
-        "e3_gate_passed": executor.name == "real-e3",
+        "preflight_ab": args.preflight,
+        "e3_gate_passed": args.gate is not None,
         "e3_manifest_ref": getattr(executor, "e3_manifest_ref", None),
         "software": {
             "git_commit": args.git_commit,
-            "sp1_version": None,
-            "fabric_version": None,
-            "anvil_version": None,
+            "sp1_version": args.preflight.get("sp1SdkVersion") if args.preflight else None,
+            "fabric_images": args.preflight.get("topologyEvidence", {}).get("fabricContainers") if args.preflight else None,
+            "anvil_version": args.preflight.get("topologyEvidence", {}).get("anvilClientVersion") if args.preflight else None,
         },
     }
 
@@ -273,28 +307,98 @@ def build_manifest(phase, rows, executor, args):
 def main():
     parser = argparse.ArgumentParser(description="E4 sweep orchestrator")
     parser.add_argument("--plan", type=Path, required=True, help="Plan CSV from e4_plan.py")
-    parser.add_argument("--phase", choices=["screening", "confirmation", "all"], default="all")
+    parser.add_argument("--phase", choices=["screening", "confirmation"], required=True)
     parser.add_argument("--executor", choices=list(EXECUTORS), default="mock")
     parser.add_argument("--out", type=Path, required=True, help="Raw JSONL output (not committed)")
     parser.add_argument("--manifest-out", type=Path, required=True, help="Run manifest JSON (committed)")
     parser.add_argument("--wall-time-s", type=float, default=None)
-    parser.add_argument("--prover", default="cpu")
+    parser.add_argument("--prover", choices=("cpu", "cuda"), default="cpu")
+    parser.add_argument("--real-binary", type=Path)
+    parser.add_argument("--fabric-gateway", default="http://127.0.0.1:8080")
+    parser.add_argument("--anchor-server", default="http://127.0.0.1:8546")
+    parser.add_argument("--e3-gate-manifest", type=Path)
+    parser.add_argument("--preflight-ab", type=Path)
     parser.add_argument("--created-at", default="1970-01-01T00:00:00Z",
                         help="ISO-8601 run timestamp (pass real time from the shell).")
     parser.add_argument("--command", default=None)
     parser.add_argument("--git-commit", default=None)
     parser.add_argument("--limit", type=int, default=None, help="Only run first N rows (smoke).")
+    parser.add_argument("--run-id", help="Run exactly one planned row (Slurm array shard).")
+    parser.add_argument("--plan-index", type=int, help="Zero-based row index within the selected phase (Slurm array).")
     args = parser.parse_args()
 
     rows = read_plan(args.plan, args.phase)
-    if args.limit:
+    if args.run_id and args.plan_index is not None:
+        parser.error("--run-id and --plan-index cannot be combined")
+    if args.plan_index is not None:
+        if not 0 <= args.plan_index < len(rows):
+            parser.error("--plan-index is outside the selected phase")
+        rows = [rows[args.plan_index]]
+    if args.run_id:
+        rows = [row for row in rows if row["run_id"] == args.run_id]
+        if len(rows) != 1:
+            parser.error("--run-id must identify exactly one row in the selected phase")
+    if (args.run_id or args.plan_index is not None) and args.limit is not None:
+        parser.error("--run-id/--plan-index and --limit cannot be combined")
+    if args.limit is not None:
+        if args.limit < 1:
+            parser.error("--limit must be positive")
         rows = rows[: args.limit]
 
-    executor = EXECUTORS[args.executor](wall_time_s=args.wall_time_s)
+    args.gate = None
+    args.preflight = None
+    if args.executor == "real-e3":
+        if not args.git_commit or len(args.git_commit) < 7:
+            parser.error("--git-commit is required for real-e3")
+        if not args.real_binary or not args.real_binary.is_file():
+            parser.error("--real-binary must point to a built e4_real_cell binary")
+        if args.wall_time_s is None or args.wall_time_s <= 0:
+            parser.error("--wall-time-s must be positive for real-e3")
+        if args.out.resolve().is_relative_to(Path(__file__).resolve().parents[1]):
+            parser.error("real E4 raw JSONL must be outside the Git repository")
+        if args.out.exists() or args.manifest_out.exists():
+            parser.error("real E4 output already exists; use a new path to preserve earlier data")
+        if not args.e3_gate_manifest or not args.e3_gate_manifest.is_file():
+            parser.error("--e3-gate-manifest is required for real-e3")
+        args.gate = json.loads(args.e3_gate_manifest.read_text())
+        if (args.gate.get("status") != "passed" or args.gate.get("anvilReceiptStatus") != 1
+                or not args.gate.get("transactionHash")):
+            parser.error("E3 gate manifest must contain a passed Anvil receipt")
+        if args.gate.get("gitCommit") != args.git_commit:
+            parser.error("E3 gate and E4 run must use the same Git commit")
+        if not args.preflight_ab or not args.preflight_ab.is_file():
+            parser.error("--preflight-ab is required for real-e3")
+        args.preflight = json.loads(args.preflight_ab.read_text())
+        metrics = ("leaf8_cpu_ms", "leaf8_gpu_ms", "leaf64_cpu_ms", "leaf64_gpu_ms",
+                   "aggregate2_cpu_ms", "aggregate2_gpu_ms")
+        if any(type(args.preflight.get(metric)) not in (int, float)
+               or not math.isfinite(args.preflight[metric])
+               or args.preflight[metric] <= 0 for metric in metrics):
+            parser.error("preflight A/B must have six measured CPU/GPU timing fields")
+        if args.preflight.get("gitCommit") != args.git_commit:
+            parser.error("E4 preflight and run must use the same Git commit")
+        if args.preflight.get("computeHost") != socket.gethostname():
+            parser.error("E4 run must use the same compute host as CPU/GPU preflight")
+        required_containers = {
+            "e2-orderer1.example.com", "e2-orderer2.example.com", "e2-orderer3.example.com",
+            "e2-peer0.org1.example.com", "e2-peer0.org2.example.com",
+        }
+        evidence = args.preflight.get("topologyEvidence", {})
+        if set(evidence.get("fabricContainers", {})) != required_containers or not evidence.get("anvilChainId"):
+            parser.error("E4 preflight is missing observed Fabric/Anvil topology evidence")
+        local = {"localhost", "127.0.0.1", "::1"}
+        split_host = (urlparse(args.fabric_gateway).hostname not in local
+                      or urlparse(args.anchor_server).hostname not in local)
+        executor = RealE3Executor(args.wall_time_s, split_host=split_host,
+                                  e3_manifest_ref=args.e3_gate_manifest,
+                                  binary=args.real_binary, fabric_gateway=args.fabric_gateway,
+                                  anchor_server=args.anchor_server, prover=args.prover)
+    else:
+        executor = MockExecutor(args.wall_time_s)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     n_ok = n_sat = n_cen = 0
-    with args.out.open("w") as f:
+    with args.out.open("x" if args.executor == "real-e3" else "w") as f:
         for i, row in enumerate(rows, 1):
             result = executor.run(row)
             record = {
@@ -322,7 +426,8 @@ def main():
 
     manifest = build_manifest(args.phase, rows, executor, args)
     args.manifest_out.parent.mkdir(parents=True, exist_ok=True)
-    args.manifest_out.write_text(json.dumps(manifest, indent=2) + "\n")
+    with args.manifest_out.open("x" if args.executor == "real-e3" else "w") as output:
+        output.write(json.dumps(manifest, indent=2) + "\n")
 
     print(f"Wrote raw JSONL: {args.out} ({len(rows)} runs; ok={n_ok} saturated={n_sat} censored={n_cen})")
     print(f"Wrote manifest:  {args.manifest_out}")
