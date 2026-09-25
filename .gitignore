@@ -10,3 +10,10 @@ results/**/raw.jsonl
 results/e2/real/
 __pycache__/
 infra/fabric/raft/runtime/
+
+# E4: raw cell records + crypto/proof/anvil artifacts are not committed
+results/e4/**/raw.jsonl
+results/e4/**/*.raw.jsonl
+results/e4/**/fabric-crypto/
+results/e4/**/proof-fixtures/
+results/e4/**/anvil-artifacts/

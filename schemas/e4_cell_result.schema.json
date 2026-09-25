@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vanthinh26102005/nckh-ise-blockchain/schemas/e4_cell_result.schema.json",
+  "title": "E4 cell result record",
+  "description": "One JSONL line per executed run (one seed of one grid cell) for E4 scalability sweep of the proposed system. Raw JSONL is NOT committed; this schema and derived tables/figures are.",
+  "type": "object",
+  "required": [
+    "kind",
+    "run_id",
+    "phase",
+    "cell_id",
+    "np",
+    "shipment",
+    "epoch_s",
+    "seed",
+    "status",
+    "epochs_target",
+    "epochs_completed",
+    "queue_drained",
+    "offered_events",
+    "committed_events",
+    "throughput_eps",
+    "completion_rate",
+    "leaf_proving_ms",
+    "aggregate_proving_ms",
+    "audit_latency_ms",
+    "gas_used",
+    "calldata_bytes",
+    "executor",
+    "split_host"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "kind": {
+      "const": "cell",
+      "description": "Discriminator for cell-result records."
+    },
+    "run_id": {
+      "type": "string",
+      "description": "Stable id: <cell_id>#s<seed>."
+    },
+    "phase": {
+      "enum": ["screening", "confirmation"],
+      "description": "Sweep phase."
+    },
+    "cell_id": {
+      "type": "string",
+      "description": "Stable cell id, e.g. screening-np500-sh64-ep120."
+    },
+    "np": { "type": "integer", "minimum": 1, "description": "Number of producers." },
+    "shipment": { "type": "integer", "minimum": 1, "description": "Events per lot (shipment size)." },
+    "epoch_s": { "type": "integer", "minimum": 1, "description": "Epoch length in seconds." },
+    "seed": { "type": "integer", "minimum": 0, "description": "Deterministic seed for this run." },
+    "lambda_events_per_min": {
+      "type": "number",
+      "description": "Per-producer Poisson rate; expected 3.84.",
+      "default": 3.84
+    },
+    "offered_load_epm": {
+      "type": "number",
+      "description": "Nominal offered load = lambda_events_per_min * np (events/min)."
+    },
+    "status": {
+      "enum": ["ok", "saturated", "censored"],
+      "description": "ok = 4 epochs completed + queue drained; saturated = hit wall-time; censored = cut for other infra reason. Never dropped or replaced."
+    },
+    "censor_reason": {
+      "type": ["string", "null"],
+      "description": "Free-text reason when status != ok (e.g. 'wall_time', 'rpc_timeout', 'oom')."
+    },
+    "epochs_target": { "type": "integer", "const": 4, "description": "Required complete epochs." },
+    "epochs_completed": { "type": "integer", "minimum": 0, "description": "Complete epochs actually observed." },
+    "queue_drained": { "type": "boolean", "description": "Whether the injection queue was fully drained before finalizing." },
+    "wall_time_s": { "type": ["number", "null"], "description": "Wall-time budget for the run, if any." },
+    "elapsed_s": { "type": "number", "minimum": 0, "description": "Actual wall-clock duration of the run." },
+
+    "offered_events": { "type": "integer", "minimum": 0, "description": "Total events injected." },
+    "committed_events": { "type": "integer", "minimum": 0, "description": "Events committed end-to-end (Fabric->proof->Anvil)." },
+    "throughput_eps": { "type": "number", "minimum": 0, "description": "Committed events per second (steady-state)." },
+    "completion_rate": { "type": "number", "minimum": 0, "maximum": 1, "description": "committed_events / offered_events." },
+
+    "leaf_proving_ms": {
+      "$ref": "#/$defs/stat",
+      "description": "Per-lot leaf proof time distribution (ms)."
+    },
+    "aggregate_proving_ms": {
+      "$ref": "#/$defs/stat",
+      "description": "SP1 aggregate proof time distribution (ms)."
+    },
+    "audit_latency_ms": {
+      "$ref": "#/$defs/stat",
+      "description": "Fabric acknowledgement -> Anvil receipt latency distribution (ms)."
+    },
+    "gas_used": {
+      "$ref": "#/$defs/stat",
+      "description": "On-chain gas used per anchor tx."
+    },
+    "calldata_bytes": {
+      "$ref": "#/$defs/stat",
+      "description": "Calldata size (bytes) per anchor tx."
+    },
+
+    "executor": { "enum": ["mock", "real-e3"], "description": "Which executor produced this record. Only real-e3 is valid E4 evidence." },
+    "split_host": { "type": "boolean", "description": "True if GPU proving is not co-located with Fabric/Anvil. Split-host runs are NOT official E4." },
+    "split_host_rtt_ms": { "type": ["number", "null"], "description": "Measured inter-host RTT when split_host is true." },
+    "e3_manifest_ref": { "type": ["string", "null"], "description": "Reference to the E3 aggregate manifest / public-values / ABI used (handoff with Hữu Trí)." },
+    "host": { "type": ["string", "null"], "description": "Host identifier / node label." }
+  },
+  "$defs": {
+    "stat": {
+      "type": "object",
+      "description": "Summary statistics for a metric across the run. Scalar-only records may set count=1 with equal fields.",
+      "required": ["count", "mean", "p50", "p95"],
+      "additionalProperties": false,
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "mean": { "type": "number" },
+        "p50": { "type": "number" },
+        "p95": { "type": "number" },
+        "p99": { "type": ["number", "null"] },
+        "min": { "type": ["number", "null"] },
+        "max": { "type": ["number", "null"] },
+        "sum": { "type": ["number", "null"] }
+      }
+    }
+  }
+}
