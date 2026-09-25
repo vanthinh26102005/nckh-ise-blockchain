@@ -1249,6 +1249,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "eudr-epoch-program"
+version = "0.1.0"
+dependencies = [
+ "eudr-policy",
+ "sha2 0.10.9",
+ "sp1-zkvm",
+]
+
+[[package]]
 name = "eudr-policy"
 version = "0.1.0"
 dependencies = [
@@ -5129,6 +5138,7 @@ dependencies = [
  "libm",
  "rand 0.8.7",
  "sha2 0.10.9",
+ "slop-algebra",
  "sp1-lib",
  "sp1-primitives",
 ]

@@ -17,3 +17,4 @@ results/e4/**/*.raw.jsonl
 results/e4/**/fabric-crypto/
 results/e4/**/proof-fixtures/
 results/e4/**/anvil-artifacts/
+results/e3/**/epoch-proof.json
