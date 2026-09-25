@@ -1,5 +1,5 @@
 [workspace]
-members = ["policy", "program", "script"]
+members = ["policy", "program", "epoch-policy", "epoch-leaf-program", "epoch-aggregate-program", "script"]
 resolver = "2"
 
 [workspace.dependencies]

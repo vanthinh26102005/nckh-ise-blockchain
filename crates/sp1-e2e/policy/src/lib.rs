@@ -260,6 +260,16 @@ impl PolicyPublicValues {
 }
 
 pub fn evaluate(input: &PolicyInput) -> Result<PolicyPublicValues, PolicyError> {
+    evaluate_with_nullifier_id(input, input.lot_id)
+}
+
+/// E3 uses a distinct nullifier identity for each leaf of a shipment while
+/// keeping every canonical event's lot ID equal to the shipment ID. E2 keeps
+/// using `evaluate`, so its proof statement and encoding remain unchanged.
+pub fn evaluate_with_nullifier_id(
+    input: &PolicyInput,
+    nullifier_id: u64,
+) -> Result<PolicyPublicValues, PolicyError> {
     validate_polygon(&input.polygon)?;
     if !(MIN_EVENTS..=MAX_EVENTS).contains(&input.events.len()) {
         return Err(PolicyError::InvalidInput);
@@ -296,8 +306,8 @@ pub fn evaluate(input: &PolicyInput) -> Result<PolicyPublicValues, PolicyError> 
         batch.update(witness.event_bytes);
     }
 
-    let nullifier = nullifier_hash(input.lot_id, input.nullifier_secret);
-    let index = nullifier_index(input.lot_id, input.nullifier_secret);
+    let nullifier = nullifier_hash(nullifier_id, input.nullifier_secret);
+    let index = nullifier_index(nullifier_id, input.nullifier_secret);
     let old_root = sparse_root(index, empty_leaf(), &input.nullifier_path);
     if old_root != input.old_nullifier_root {
         return Err(PolicyError::C5Nullifier);

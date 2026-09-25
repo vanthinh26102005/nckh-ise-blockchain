@@ -1,3 +1,4 @@
+pub mod epoch;
 pub mod http;
 
 use ed25519_dalek::{Signer, SigningKey};

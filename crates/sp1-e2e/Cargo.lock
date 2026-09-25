@@ -1249,6 +1249,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "eudr-epoch-aggregate-program"
+version = "0.1.0"
+dependencies = [
+ "eudr-epoch-policy",
+ "sha2 0.10.9",
+ "sp1-zkvm",
+]
+
+[[package]]
+name = "eudr-epoch-leaf-program"
+version = "0.1.0"
+dependencies = [
+ "eudr-epoch-policy",
+ "sp1-zkvm",
+]
+
+[[package]]
+name = "eudr-epoch-policy"
+version = "0.1.0"
+dependencies = [
+ "eudr-policy",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "eudr-policy"
 version = "0.1.0"
 dependencies = [
@@ -4715,9 +4740,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
+ "cargo_metadata",
  "clap",
  "e2-bench",
  "ed25519-dalek",
+ "eudr-epoch-policy",
  "eudr-policy",
  "hex",
  "serde_json",
@@ -5129,6 +5156,7 @@ dependencies = [
  "libm",
  "rand 0.8.7",
  "sha2 0.10.9",
+ "slop-algebra",
  "sp1-lib",
  "sp1-primitives",
 ]

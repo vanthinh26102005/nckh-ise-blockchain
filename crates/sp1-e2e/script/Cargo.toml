@@ -9,6 +9,10 @@ default-run = "sp1-e2e"
 name = "sp1-e2e"
 path = "src/bin/main.rs"
 
+[[bin]]
+name = "e3-epoch-smoke"
+path = "src/bin/e3_epoch_smoke.rs"
+
 [features]
 cuda = ["sp1-sdk/cuda", "sp1-sdk/groth16-cuda"]
 
@@ -18,6 +22,7 @@ base64 = "0.22"
 clap = { version = "4.4", features = ["derive"] }
 e2-bench = { path = "../../e2-bench" }
 eudr-policy = { path = "../policy" }
+eudr-epoch-policy = { path = "../epoch-policy" }
 ed25519-dalek.workspace = true
 hex = "0.4"
 serde_json = "1"
@@ -26,3 +31,5 @@ sp1-sdk = { version = "6.4.0", features = ["blocking", "native-gnark"] }
 
 [build-dependencies]
 sp1-build = "6.4.0"
+cargo_metadata = "0.18"
+sp1-sdk = { version = "6.4.0", features = ["blocking", "native-gnark"] }
