@@ -197,3 +197,24 @@ cargo run --release -p e2-bench -- \
 ```
 
 `crates/e2-bench/` không gọi Fabric, SP1 hay RPC Anvil; nó là historical artifact tách biệt với `crates/sp1-e2e/script/src/bin/e2_real_benchmark.rs`.
+
+## E3 Recursive Epoch và Baseline Comparison
+
+E3 có leaf statement riêng để shipment 128 event được chia thành hai proof 64 event. Aggregate guest xác minh proof con SP1 dạng compressed, kiểm tra nullifier-root chain và thứ tự leaf, sau đó tạo public values cho một Groth16 epoch proof. `contracts/EpochAggregateAnchor.sol` xác minh proof cha trên Anvil; `contracts/EpochAnchor.sol` của E2 giữ nguyên. Xem [methodology E3](docs/reports/e3_methodology.md) và [raw schema](results/e3/schema.json).
+
+Sau khi cài SP1 v6.4.0 và chạy Anvil, tạo proof fixture và chạy smoke:
+
+```bash
+cargo run --release --manifest-path crates/sp1-e2e/Cargo.toml -p sp1-e2e --bin e3-epoch-smoke
+cd contracts && E3_FIXTURE=/tmp/eudr-e3-epoch-fixture.json npm run anvil:e3-smoke
+```
+
+Khởi động E3 Anvil service bằng `npm run anvil:e3-server` trong `contracts/`. Runner độc lập dùng `--baseline fabric-only`, `hash-on-chain`, `vecro-token-adapted` hoặc `proposed`; bốn lần chạy cần cùng `--run-id`, seed và thông số arrival. Ví dụ pilot (không dùng làm evidence):
+
+```bash
+cargo run --release --manifest-path crates/sp1-e2e/Cargo.toml -p sp1-e2e --bin e3-compare -- \
+  --baseline hash-on-chain --accelerated --duration-min 1 --seeds 1 \
+  --out results/e3/raw/hash-on-chain.jsonl
+```
+
+Workload chính thêm `--main --duration-min 60 --seeds 30 --hardware-label '<machine>'` và bỏ `--accelerated`. Raw JSONL trong `results/e3/raw/` được Git bỏ qua. `scripts/e3_analyze.py` chỉ chấp nhận dữ liệu chính đủ 30 paired seed và cùng manifest cho cả bốn baseline; cách gọi và định nghĩa metrics nằm trong methodology.

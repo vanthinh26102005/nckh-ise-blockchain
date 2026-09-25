@@ -13,6 +13,10 @@ path = "src/bin/main.rs"
 name = "e3-epoch-smoke"
 path = "src/bin/e3_epoch_smoke.rs"
 
+[[bin]]
+name = "e3-compare"
+path = "src/bin/e3_compare.rs"
+
 [features]
 cuda = ["sp1-sdk/cuda", "sp1-sdk/groth16-cuda"]
 

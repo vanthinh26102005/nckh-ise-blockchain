@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "E3 raw benchmark JSONL record",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["kind", "baseline", "seed", "mode", "manifestSha256", "expectedShipments", "durationMin", "lambdaEventsPerMin", "producerCount", "drainMin", "gitCommit", "hardwareLabel"],
+      "properties": {
+        "kind": { "const": "run" },
+        "baseline": { "enum": ["fabric-only", "hash-on-chain", "vecro-token-adapted", "proposed"] },
+        "seed": { "type": "integer", "minimum": 1 },
+        "mode": { "enum": ["main", "paced-pilot", "accelerated-pilot"] },
+        "manifestSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "expectedShipments": { "type": "integer", "minimum": 0 },
+        "producerCount": { "type": "integer", "minimum": 1 },
+        "durationMin": { "type": "number", "exclusiveMinimum": 0 },
+        "lambdaEventsPerMin": { "type": "number", "exclusiveMinimum": 0 },
+        "drainMin": { "type": "number", "minimum": 0 },
+        "gitCommit": { "type": "string" },
+        "hardwareLabel": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "required": ["kind", "baseline", "seed", "shipmentId", "epochId", "eventCount", "readyAtMs", "completedAtMs", "status", "receipt"],
+      "properties": {
+        "kind": { "const": "shipment" },
+        "baseline": { "enum": ["fabric-only", "hash-on-chain", "vecro-token-adapted", "proposed"] },
+        "seed": { "type": "integer", "minimum": 1 },
+        "shipmentId": { "type": "string", "pattern": "^[0-9]+$" },
+        "epochId": { "type": "string", "pattern": "^[0-9]+$" },
+        "eventCount": { "type": "integer", "minimum": 8, "maximum": 64 },
+        "readyAtMs": { "type": "integer", "minimum": 0 },
+        "completedAtMs": { "type": "integer", "minimum": 0 },
+        "status": { "enum": ["ok", "error", "timeout"] },
+        "receipt": { "type": ["object", "null"] }
+      }
+    },
+    {
+      "type": "object",
+      "required": ["kind", "baseline", "seed", "elapsedMs"],
+      "properties": {
+        "kind": { "const": "seed-end" },
+        "baseline": { "enum": ["fabric-only", "hash-on-chain", "vecro-token-adapted", "proposed"] },
+        "seed": { "type": "integer", "minimum": 1 },
+        "elapsedMs": { "type": "integer", "minimum": 0 }
+      }
+    }
+  ]
+}

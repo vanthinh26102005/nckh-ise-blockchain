@@ -8,5 +8,6 @@
 results/**/raw.csv
 results/**/raw.jsonl
 results/e2/real/
+results/e3/raw/
 __pycache__/
 infra/fabric/raft/runtime/
