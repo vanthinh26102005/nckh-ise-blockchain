@@ -2,6 +2,8 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
+pub mod epoch;
+
 pub const EPCIS_EVENT_BYTES: usize = 86;
 pub const ED25519_SIGNATURE_BYTES: usize = 64;
 pub const MAX_POLYGON_VERTICES: usize = 32;

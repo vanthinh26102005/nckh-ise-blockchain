@@ -10,10 +10,11 @@ use eudr_policy::{
 use sha2::{Digest, Sha256};
 use sp1_sdk::{
     blocking::{ProveRequest, Prover, ProverClient},
-    include_elf, Elf, HashableKey, ProvingKey, SP1ProofWithPublicValues, SP1Stdin,
+    include_elf, Elf, HashableKey, ProvingKey, SP1Proof, SP1ProofWithPublicValues, SP1Stdin,
 };
 
 pub const EUDR_POLICY_ELF: Elf = include_elf!("eudr-policy-program");
+pub const EUDR_EPOCH_ELF: Elf = include_elf!("eudr-epoch-program");
 
 /// Synthetic but canonical signed events for one benchmark lot.
 /// The seed only derives fixture keys; every proof still verifies the actual Ed25519 signatures.
@@ -203,6 +204,137 @@ pub fn setup_policy_prover<P: Prover>(client: &P) -> Result<P::ProvingKey, Strin
     client
         .setup(EUDR_POLICY_ELF)
         .map_err(|error| format!("SP1 policy setup failed: {error}"))
+}
+
+pub fn setup_epoch_prover<P: Prover>(client: &P) -> Result<P::ProvingKey, String> {
+    client
+        .setup(EUDR_EPOCH_ELF)
+        .map_err(|error| format!("SP1 epoch setup failed: {error}"))
+}
+
+pub fn prove_policy_compressed_with<P: Prover>(
+    client: &P,
+    key: &P::ProvingKey,
+    input: &PolicyInput,
+) -> Result<SP1ProofWithPublicValues, String> {
+    let expected = evaluate(input).map_err(policy_error)?;
+    let mut stdin = SP1Stdin::new();
+    stdin.write(&input.encode().map_err(policy_error)?);
+    let proof = client
+        .prove(key, stdin)
+        .compressed()
+        .run()
+        .map_err(|error| format!("SP1 compressed leaf proving failed: {error}"))?;
+    client
+        .verify(&proof, key.verifying_key(), None)
+        .map_err(|error| format!("SP1 compressed leaf verification failed: {error}"))?;
+    if proof.public_values.as_slice() != expected.abi_encode() {
+        return Err("compressed leaf public values disagree with policy evaluation".to_string());
+    }
+    Ok(proof)
+}
+
+pub fn prove_epoch_with<P: Prover>(
+    client: &P,
+    epoch_key: &P::ProvingKey,
+    leaf_key: &P::ProvingKey,
+    children: Vec<SP1ProofWithPublicValues>,
+) -> Result<SP1ProofWithPublicValues, String> {
+    prove_epoch_node(client, epoch_key, leaf_key, children, false)
+}
+
+/// Recursively reduce arbitrary ordered leaf proofs with fan-in at most eight.
+pub fn prove_epoch_tree_with<P: Prover>(
+    client: &P,
+    epoch_key: &P::ProvingKey,
+    leaf_key: &P::ProvingKey,
+    mut children: Vec<SP1ProofWithPublicValues>,
+) -> Result<SP1ProofWithPublicValues, String> {
+    if children.is_empty() {
+        return Err("epoch has no children".to_string());
+    }
+    while children.len() > eudr_policy::epoch::MAX_FAN_IN {
+        let mut next = Vec::new();
+        let mut remaining = children.into_iter();
+        loop {
+            let group: Vec<_> = remaining
+                .by_ref()
+                .take(eudr_policy::epoch::MAX_FAN_IN)
+                .collect();
+            if group.is_empty() {
+                break;
+            }
+            next.push(prove_epoch_node(client, epoch_key, leaf_key, group, true)?);
+        }
+        children = next;
+    }
+    prove_epoch_node(client, epoch_key, leaf_key, children, false)
+}
+
+fn prove_epoch_node<P: Prover>(
+    client: &P,
+    epoch_key: &P::ProvingKey,
+    leaf_key: &P::ProvingKey,
+    children: Vec<SP1ProofWithPublicValues>,
+    compressed: bool,
+) -> Result<SP1ProofWithPublicValues, String> {
+    use eudr_policy::epoch::{EpochChild, EPOCH_PUBLIC_BYTES, LEAF_PUBLIC_BYTES};
+    let mut public_children = Vec::with_capacity(children.len());
+    for proof in &children {
+        let values = proof.public_values.as_slice();
+        let (vk, child) = match values.len() {
+            LEAF_PUBLIC_BYTES => (
+                leaf_key.verifying_key(),
+                EpochChild::Leaf(values.try_into().unwrap()),
+            ),
+            EPOCH_PUBLIC_BYTES => (
+                epoch_key.verifying_key(),
+                EpochChild::Aggregate(values.try_into().unwrap()),
+            ),
+            _ => {
+                return Err(
+                    "child public-values length is neither leaf nor aggregate ABI".to_string(),
+                )
+            }
+        };
+        client
+            .verify(proof, vk, None)
+            .map_err(|error| format!("SP1 child verification failed: {error}"))?;
+        public_children.push(child);
+    }
+    let input = eudr_policy::epoch::EpochInput {
+        leaf_vk_digest: leaf_key.verifying_key().hash_bytes(),
+        aggregate_vk_digest: epoch_key.verifying_key().hash_bytes(),
+        children: public_children,
+    };
+    let expected =
+        eudr_policy::epoch::evaluate(&input).map_err(|error| format!("invalid epoch: {error}"))?;
+    let mut stdin = SP1Stdin::new();
+    stdin.write(&input.encode().map_err(str::to_string)?);
+    for proof in children {
+        let vk = match proof.public_values.as_slice().len() {
+            LEAF_PUBLIC_BYTES => leaf_key.verifying_key(),
+            EPOCH_PUBLIC_BYTES => epoch_key.verifying_key(),
+            _ => unreachable!("validated child ABI length"),
+        };
+        let SP1Proof::Compressed(compressed) = proof.proof else {
+            return Err("epoch aggregation requires compressed SP1 child proofs".to_string());
+        };
+        stdin.write_proof(*compressed, vk.vk.clone());
+    }
+    let proof = if compressed {
+        client.prove(epoch_key, stdin).compressed().run()
+    } else {
+        client.prove(epoch_key, stdin).groth16().run()
+    }
+    .map_err(|error| format!("SP1 epoch proving failed: {error}"))?;
+    client
+        .verify(&proof, epoch_key.verifying_key(), None)
+        .map_err(|error| format!("SP1 epoch local verification failed: {error}"))?;
+    if proof.public_values.as_slice() != expected.abi_encode() {
+        return Err("epoch proof public values disagree with authenticated leaves".to_string());
+    }
+    Ok(proof)
 }
 
 pub fn prove_with<P: Prover>(
