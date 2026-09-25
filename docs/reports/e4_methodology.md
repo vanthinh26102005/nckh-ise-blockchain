@@ -3,11 +3,9 @@
 **Issue:** [#22](https://github.com/vanthinh26102005/nckh-ise-blockchain/issues/22) · **RQ4**
 **Nhánh:** `feat/` (không dùng worktree) · **Ngày soạn:** 2026-09-23
 
-Tài liệu này chốt phương pháp cho E4 trước khi chạy benchmark chính. Nó mô tả grid
-sweep, mô hình tải, quy tắc đo/censoring, và ranh giới split-host. Phần harness +
-schema + analysis đã được chuẩn bị trước (xem [Trạng thái chuẩn bị](#7-trạng-thái-chuẩn-bị))
-để có thể validate toàn tuyến `plan → run → analyze` bằng mock executor ngay bây giờ;
-executor thật được cắm vào sau khi E3 aggregate proof gate pass.
+Tài liệu này chốt phương pháp E4 trước benchmark chính. Harness có executor thật
+gọi `e4_real_cell` để đi qua Fabric → SP1 recursion → Anvil; **chưa có số liệu
+GPU chính thức**. Mock executor chỉ tự kiểm thử plan/schema/analyzer.
 
 ## 1. Câu hỏi nghiên cứu
 
@@ -24,14 +22,15 @@ Benchmark chính chỉ hợp lệ khi E3 aggregate proof gate đã pass toàn ch
 Fabric (2 org / 2 peer / 3 Raft orderer) → leaf proofs → SP1 aggregate proof → Anvil receipt thật
 ```
 
-Trước khi E3 pass, chỉ được chạy `--executor mock` để kiểm thử harness/schema/analysis;
-số liệu mock **không phải** bằng chứng E4 và bị analyzer từ chối khi `--require-real`.
+Runner thật yêu cầu E3 gate manifest có receipt thành công và preflight CPU/GPU
+trên cùng topology. Analyzer từ chối mock với `--require-real`.
 
 ## 3. Mô hình tải (Poisson)
 
 - Mỗi producer sinh shipment theo Poisson với kỳ vọng **3,84 event/phút**.
 - Tổng tải danh nghĩa của một cell = `3,84 × Np` event/phút.
-- Inter-arrival lấy mẫu deterministic theo seed (ChaCha20), tái lập được.
+- Workload mock lấy mẫu Poisson theo seed bằng Python `random.Random`; runner thật
+  dùng `e2-bench` ChaCha20 và ghi seed, commit, prover, receipt trong raw/manifest.
 - **Drain:** khi ngừng inject event, phải xử lý cạn queue (drain) rồi mới kết thúc
   cell; latency của phần drain vẫn được tính.
 
@@ -78,6 +77,11 @@ lập plan cho ra cùng danh sách run.
 
 Preflight bắt buộc trên topology Fabric 2org/2peer/3 Raft orderer + Gateway + Anvil
 + GPU prover, lưu metadata A/B CPU–GPU (leaf 8/64 event, aggregate 2 lot).
+GPU preflight tái dùng đúng event đã được CPU run commit trên Fabric, không
+submit duplicate; hai prover vì thế xử lý cùng witness và public statement.
+`make e4-preflight E4_PREFLIGHT_RAW_ROOT=/datastore/uitchain/e4/preflight-raw
+E4_PREFLIGHT=results/e4/preflight.json` chạy bốn proof CPU/GPU, thu receipt
+Anvil và ghi cả container ID/image Fabric, Anvil client version, SP1 SDK version.
 
 Nếu GPU proving **không cùng host** với Fabric/Anvil, phải ghi rõ `split_host: true`
 và network latency giữa host trong metadata. Run split-host **không được** dùng làm
@@ -102,8 +106,8 @@ phải được báo minh bạch.
 ## 9. Handoff với E3 (Hữu Trí)
 
 Dùng đúng aggregate public-values / ABI / manifest của E3; **không** tự định nghĩa
-lại format proof hoặc root ở host. Điểm cắm trong harness: `RealE3Executor` trong
-`scripts/e4_run.py` (hiện là stub, TODO gọi binary/pipeline E3).
+lại format proof hoặc root ở host. `RealE3Executor` gọi binary Rust thật và
+chỉ nhận `status=ok` khi cả bốn epoch có receipt và queue đã drain.
 
 ## 10. Trạng thái chuẩn bị
 
@@ -113,8 +117,22 @@ lại format proof hoặc root ở host. Điểm cắm trong harness: `RealE3Exe
 | Sweep plan generator | `scripts/e4_plan.py` | ✅ |
 | Run manifest schema | `schemas/e4_run_manifest.schema.json` | ✅ |
 | Cell-result schema | `schemas/e4_cell_result.schema.json` | ✅ |
-| Runner harness (mock + seam E3) | `scripts/e4_run.py` | ✅ mock; ⏳ real executor chờ E3 |
+| Runner harness | `scripts/e4_run.py`, `e4_real_cell` | ✅ đường thật; chưa chạy full GPU |
 | Analysis / figures | `scripts/e4_analyze.py` | ✅ |
 | Make targets | `Makefile` (`e4-plan`, `e4-run-mock`, `e4-analyze-*`) | ✅ |
 
-Chạy chính (`RealE3Executor`) bị chặn cho tới khi E3 aggregate proof gate pass.
+Chạy chính (`RealE3Executor`) bị chặn cho tới khi E3 aggregate proof gate pass,
+preflight CPU/GPU đủ sáu timing và raw output nằm ngoài Git. Trên Slurm, chạy
+từng `run_id` của plan bằng `e4_run.py --run-id ...` (hoặc `--plan-index 0..79`
+và `0..269` cho Slurm array) để không nhồi 80/270 run
+vào một job; mỗi shard lưu `raw.jsonl` và `manifest.json` cùng thư mục. Sau đó
+`e4_merge.py` chỉ ghép nếu toàn bộ run ID của phase có đúng một shard, cùng
+code/gate/preflight, rồi `e4_analyze.py --require-real --require-single-host`
+kiểm tra lần cuối. Cell lỗi/hết thời gian giữ trạng thái censored/saturated;
+không thay số bằng mock.
+
+Một cặp Fabric Gateway/Anvil dùng chung chỉ chạy **một shard tại một thời
+điểm**; nếu chạy song song phải cấp topology và cổng riêng cho từng shard,
+không để các lần `/e3/reset` ghi đè trạng thái của nhau. Official E4 chỉ dùng
+Fabric, Anvil và prover trên cùng compute host đã chạy preflight; nối về
+headnode là split-host pilot và bị analyzer chính thức từ chối.

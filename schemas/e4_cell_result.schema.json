@@ -72,12 +72,14 @@
     "epochs_completed": { "type": "integer", "minimum": 0, "description": "Complete epochs actually observed." },
     "queue_drained": { "type": "boolean", "description": "Whether the injection queue was fully drained before finalizing." },
     "wall_time_s": { "type": ["number", "null"], "description": "Wall-time budget for the run, if any." },
-    "elapsed_s": { "type": "number", "minimum": 0, "description": "Actual wall-clock duration of the run." },
+    "elapsed_s": { "type": ["number", "null"], "minimum": 0, "description": "Actual wall-clock duration, null when the real subprocess failed before reporting." },
 
-    "offered_events": { "type": "integer", "minimum": 0, "description": "Total events injected." },
-    "committed_events": { "type": "integer", "minimum": 0, "description": "Events committed end-to-end (Fabric->proof->Anvil)." },
-    "throughput_eps": { "type": "number", "minimum": 0, "description": "Committed events per second (steady-state)." },
-    "completion_rate": { "type": "number", "minimum": 0, "maximum": 1, "description": "committed_events / offered_events." },
+    "offered_events": { "type": ["integer", "null"], "minimum": 0, "description": "Scheduled events, null if the real subprocess failed before reporting." },
+    "committed_events": { "type": ["integer", "null"], "minimum": 0, "description": "Events committed end-to-end (Fabric->proof->Anvil), null if unavailable." },
+    "offered_shipments": { "type": ["integer", "null"], "minimum": 0 },
+    "committed_shipments": { "type": ["integer", "null"], "minimum": 0 },
+    "throughput_eps": { "type": ["number", "null"], "minimum": 0, "description": "Committed events per second, null if unavailable." },
+    "completion_rate": { "type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "committed_events / offered_events, null if unavailable." },
 
     "leaf_proving_ms": {
       "$ref": "#/$defs/stat",
@@ -114,9 +116,9 @@
       "additionalProperties": false,
       "properties": {
         "count": { "type": "integer", "minimum": 0 },
-        "mean": { "type": "number" },
-        "p50": { "type": "number" },
-        "p95": { "type": "number" },
+        "mean": { "type": ["number", "null"] },
+        "p50": { "type": ["number", "null"] },
+        "p95": { "type": ["number", "null"] },
         "p99": { "type": ["number", "null"] },
         "min": { "type": ["number", "null"] },
         "max": { "type": ["number", "null"] },

@@ -36,9 +36,13 @@ def read_jsonl(path):
     return [r for r in records if r.get("kind") == "cell"]
 
 
-def mean_or_zero(values):
+def mean_or_none(values):
     values = [v for v in values if v is not None]
-    return statistics.fmean(values) if values else 0.0
+    return statistics.fmean(values) if values else None
+
+
+def display(value, places=1):
+    return f"{value:.{places}f}" if value is not None else "n/a"
 
 
 def aggregate_cells(records):
@@ -64,28 +68,30 @@ def aggregate_cells(records):
             "n_ok": statuses.count("ok"),
             "n_saturated": statuses.count("saturated"),
             "n_censored": statuses.count("censored"),
-            "throughput_eps_mean": mean_or_zero([r["throughput_eps"] for r in runs]),
-            "throughput_eps_ok_mean": mean_or_zero([r["throughput_eps"] for r in ok_runs]),
-            "completion_rate_mean": mean_or_zero([r["completion_rate"] for r in runs]),
-            "leaf_p50_ms": mean_or_zero([r["leaf_proving_ms"]["p50"] for r in runs]),
-            "leaf_p95_ms": mean_or_zero([r["leaf_proving_ms"]["p95"] for r in runs]),
-            "aggregate_p50_ms": mean_or_zero([r["aggregate_proving_ms"]["p50"] for r in runs]),
-            "aggregate_p95_ms": mean_or_zero([r["aggregate_proving_ms"]["p95"] for r in runs]),
-            "audit_p50_ms": mean_or_zero([r["audit_latency_ms"]["p50"] for r in runs]),
-            "audit_p95_ms": mean_or_zero([r["audit_latency_ms"]["p95"] for r in runs]),
-            "gas_mean": mean_or_zero([r["gas_used"]["mean"] for r in runs]),
-            "calldata_bytes_mean": mean_or_zero([r["calldata_bytes"]["mean"] for r in runs]),
+            "throughput_eps_mean": mean_or_none([r["throughput_eps"] for r in runs]),
+            "throughput_eps_ok_mean": mean_or_none([r["throughput_eps"] for r in ok_runs]),
+            "completion_rate_mean": mean_or_none([r["completion_rate"] for r in runs]),
+            "leaf_p50_ms": mean_or_none([r["leaf_proving_ms"]["p50"] for r in runs]),
+            "leaf_p95_ms": mean_or_none([r["leaf_proving_ms"]["p95"] for r in runs]),
+            "aggregate_p50_ms": mean_or_none([r["aggregate_proving_ms"]["p50"] for r in runs]),
+            "aggregate_p95_ms": mean_or_none([r["aggregate_proving_ms"]["p95"] for r in runs]),
+            "audit_p50_ms": mean_or_none([r["audit_latency_ms"]["p50"] for r in runs]),
+            "audit_p95_ms": mean_or_none([r["audit_latency_ms"]["p95"] for r in runs]),
+            "gas_mean": mean_or_none([r["gas_used"]["mean"] for r in runs]),
+            "calldata_bytes_mean": mean_or_none([r["calldata_bytes"]["mean"] for r in runs]),
         })
     return cells
 
 
-def validate(records, manifest, cells, require_real, require_single_host):
+def validate(records, manifest, cells, require_real, require_single_host, plan_rows=None):
     errors = []
     warnings = []
 
     executors = {r["executor"] for r in records}
     if require_real and executors != {"real-e3"}:
         errors.append(f"--require-real set but executor(s) = {sorted(executors)}; mock is not E4 evidence.")
+    if require_real and (manifest.get("e3_gate_passed") is not True or not manifest.get("preflight_ab")):
+        errors.append("real E4 requires a passed E3 gate and measured CPU/GPU preflight")
     if "mock" in executors:
         warnings.append("Data contains mock-executor runs (harness self-test, NOT E4 evidence).")
 
@@ -94,14 +100,33 @@ def validate(records, manifest, cells, require_real, require_single_host):
         (errors if require_single_host else warnings).append(msg)
 
     expected_spc = manifest.get("seeds_per_cell")
+    run_ids = [r["run_id"] for r in records]
+    if len(run_ids) != len(set(run_ids)):
+        errors.append("duplicate run_id in raw E4 records")
+    if manifest.get("runs_total") != len(records):
+        errors.append(f"manifest runs_total={manifest.get('runs_total')} but raw has {len(records)} records")
+    if plan_rows is not None:
+        planned = {row["run_id"] for row in plan_rows if row["phase"] == manifest.get("phase")}
+        actual = set(run_ids)
+        if actual != planned:
+            errors.append(f"raw E4 run IDs differ from committed plan: missing={len(planned - actual)}, extra={len(actual - planned)}")
     for c in cells:
         if expected_spc and c["runs"] != expected_spc:
             errors.append(f"Cell {c['cell_id']}: {c['runs']} runs, expected {expected_spc} seeds/cell.")
+        if len(c["seeds"]) != c["runs"]:
+            errors.append(f"Cell {c['cell_id']} repeats a seed")
 
     # Exactly-4-epochs rule for cells claiming ok.
     for r in records:
         if r["status"] == "ok" and r.get("epochs_completed") != EPOCHS_TARGET:
             errors.append(f"Run {r['run_id']}: status=ok but epochs_completed={r.get('epochs_completed')} != {EPOCHS_TARGET}.")
+        if r["status"] == "ok" and (not r.get("queue_drained") or r.get("committed_events") != r.get("offered_events")):
+            errors.append(f"Run {r['run_id']}: status=ok without a drained, fully committed queue")
+        if require_real and r["status"] == "ok" and (not r.get("offered_shipments")
+                or r.get("committed_shipments") != r.get("offered_shipments")):
+            errors.append(f"Run {r['run_id']}: status=ok without all shipments committed")
+        if require_real and len(r.get("transactions", [])) != r.get("epochs_completed"):
+            errors.append(f"Run {r['run_id']}: missing Anvil receipt for a completed epoch")
 
     return errors, warnings
 
@@ -139,13 +164,13 @@ def write_policy_tradeoff_csv(cells, path):
             "shipment": shipment,
             "epoch_s": epoch_s,
             "cells": len(group),
-            "throughput_eps_mean": mean_or_zero([g["throughput_eps_mean"] for g in group]),
-            "completion_rate_mean": mean_or_zero([g["completion_rate_mean"] for g in group]),
-            "leaf_p50_ms": mean_or_zero([g["leaf_p50_ms"] for g in group]),
-            "aggregate_p50_ms": mean_or_zero([g["aggregate_p50_ms"] for g in group]),
-            "audit_p50_ms": mean_or_zero([g["audit_p50_ms"] for g in group]),
-            "gas_mean": mean_or_zero([g["gas_mean"] for g in group]),
-            "calldata_bytes_mean": mean_or_zero([g["calldata_bytes_mean"] for g in group]),
+            "throughput_eps_mean": mean_or_none([g["throughput_eps_mean"] for g in group]),
+            "completion_rate_mean": mean_or_none([g["completion_rate_mean"] for g in group]),
+            "leaf_p50_ms": mean_or_none([g["leaf_p50_ms"] for g in group]),
+            "aggregate_p50_ms": mean_or_none([g["aggregate_p50_ms"] for g in group]),
+            "audit_p50_ms": mean_or_none([g["audit_p50_ms"] for g in group]),
+            "gas_mean": mean_or_none([g["gas_mean"] for g in group]),
+            "calldata_bytes_mean": mean_or_none([g["calldata_bytes_mean"] for g in group]),
             "n_saturated": sum(g["n_saturated"] for g in group),
             "n_censored": sum(g["n_censored"] for g in group),
         })
@@ -181,7 +206,7 @@ def write_heatmaps(cells, out_dir, metric, title, fname):
         for i, np_ in enumerate(nps):
             for j, sh in enumerate(ships):
                 c = index.get((np_, sh, epoch_s))
-                if c:
+                if c and c[metric] is not None:
                     grid[i, j] = c[metric]
         im = ax.imshow(grid, aspect="auto", origin="lower", cmap="viridis")
         ax.set_xticks(range(len(ships)))
@@ -198,8 +223,8 @@ def write_heatmaps(cells, out_dir, metric, title, fname):
                 if c and (c["n_saturated"] or c["n_censored"]):
                     ax.add_patch(plt.Rectangle((j - 0.5, i - 0.5), 1, 1, fill=False,
                                                hatch="///", edgecolor="red", linewidth=0))
-                if c:
-                    ax.text(j, i, f"{c[metric]:.0f}" if c[metric] >= 10 else f"{c[metric]:.2f}",
+                if c and c[metric] is not None:
+                    ax.text(j, i, display(c[metric], 0 if c[metric] >= 10 else 2),
                             ha="center", va="center", color="white", fontsize=7)
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     fig.suptitle(f"{title}  (red hatch = saturated/censored)")
@@ -223,8 +248,8 @@ def write_proving_plot(policy_rows, out_dir, fname="proving_time.png"):
         by_ship[r["shipment"]]["leaf"].append(r["leaf_p50_ms"])
         by_ship[r["shipment"]]["agg"].append(r["aggregate_p50_ms"])
     ships = sorted(by_ship)
-    leaf = [mean_or_zero(by_ship[s]["leaf"]) for s in ships]
-    agg = [mean_or_zero(by_ship[s]["agg"]) for s in ships]
+    leaf = [mean_or_none(by_ship[s]["leaf"]) for s in ships]
+    agg = [mean_or_none(by_ship[s]["agg"]) for s in ships]
     fig, ax = plt.subplots(figsize=(7, 4.5))
     ax.plot(ships, leaf, marker="o", label="leaf proving p50")
     ax.plot(ships, agg, marker="s", label="aggregate proving p50")
@@ -288,9 +313,9 @@ def write_report(cells, records, manifest, errors, warnings, policy_rows, path):
     ]
     for r in policy_rows:
         lines.append(
-            f"| {r['shipment']} | {r['epoch_s']} | {r['throughput_eps_mean']:.2f} | "
-            f"{r['completion_rate_mean']:.3f} | {r['leaf_p50_ms']:.1f} | {r['aggregate_p50_ms']:.1f} | "
-            f"{r['gas_mean']:.0f} | {r['calldata_bytes_mean']:.0f} | {r['n_saturated']} | {r['n_censored']} |"
+            f"| {r['shipment']} | {r['epoch_s']} | {display(r['throughput_eps_mean'], 2)} | "
+            f"{display(r['completion_rate_mean'], 3)} | {display(r['leaf_p50_ms'])} | {display(r['aggregate_p50_ms'])} | "
+            f"{display(r['gas_mean'], 0)} | {display(r['calldata_bytes_mean'], 0)} | {r['n_saturated']} | {r['n_censored']} |"
         )
     lines.append("")
     lines.append("Full per-cell numbers: `summary.csv`. Policy grid: `policy_tradeoff.csv`.")
@@ -309,6 +334,7 @@ def main():
     parser.add_argument("--require-single-host", action="store_true",
                         help="Reject split-host runs (not official E4).")
     parser.add_argument("--no-figures", action="store_true")
+    parser.add_argument("--allow-partial", action="store_true", help="Pilot only; skip full committed-plan check.")
     args = parser.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -318,7 +344,14 @@ def main():
     manifest = json.loads(Path(args.manifest).read_text())
 
     cells = aggregate_cells(records)
-    errors, warnings = validate(records, manifest, cells, args.require_real, args.require_single_host)
+    plan_rows = None
+    if not args.allow_partial:
+        plan_path = Path(manifest.get("plan_path", ""))
+        if not plan_path.is_file():
+            raise SystemExit(f"Committed E4 plan is missing: {plan_path}")
+        with plan_path.open(newline="") as f:
+            plan_rows = list(csv.DictReader(f))
+    errors, warnings = validate(records, manifest, cells, args.require_real, args.require_single_host, plan_rows)
 
     write_summary_csv(cells, args.out_dir / "summary.csv")
     policy_rows = write_policy_tradeoff_csv(cells, args.out_dir / "policy_tradeoff.csv")

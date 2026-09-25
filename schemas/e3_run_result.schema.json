@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vanthinh26102005/nckh-ise-blockchain/schemas/e3_run_result.schema.json",
+  "title": "E3 paired baseline run",
+  "description": "One immutable mode/seed run. Raw records and proof bytes stay outside Git.",
+  "type": "object",
+  "required": ["experiment", "git_commit", "gate_transaction_hash", "mode", "seed", "prover", "np", "lambda_events_per_min", "duration_min", "shipment", "epoch_s", "epochs_target", "measurement"],
+  "properties": {
+    "experiment": { "const": "E3" },
+    "git_commit": { "type": "string", "minLength": 7 },
+    "gate_transaction_hash": { "type": "string", "pattern": "^0x[0-9a-fA-F]{64}$" },
+    "mode": { "enum": ["fabric-only", "hash-on-chain", "vecro-adapted", "proposed"] },
+    "seed": { "type": "integer", "minimum": 0, "maximum": 29 },
+    "prover": { "enum": ["cpu", "cuda"] },
+    "np": { "const": 125 },
+    "lambda_events_per_min": { "const": 480 },
+    "duration_min": { "const": 60 },
+    "shipment": { "const": 64 },
+    "epoch_s": { "const": 60 },
+    "epochs_target": { "const": 60 },
+    "measurement": {
+      "type": "object",
+      "required": ["mode", "status", "epochs_completed", "queue_drained", "elapsed_s", "offered_events", "committed_events", "offered_shipments", "committed_shipments", "audit_samples", "gas_samples", "calldata_samples", "transactions"],
+      "properties": {
+        "status": { "enum": ["ok", "saturated", "censored"] },
+        "epochs_completed": { "type": "integer", "minimum": 0, "maximum": 60 },
+        "queue_drained": { "type": "boolean" },
+        "elapsed_s": { "type": ["number", "null"], "minimum": 0 },
+        "offered_events": { "type": ["integer", "null"], "minimum": 0 },
+        "committed_events": { "type": ["integer", "null"], "minimum": 0 },
+        "offered_shipments": { "type": ["integer", "null"], "minimum": 0 },
+        "committed_shipments": { "type": ["integer", "null"], "minimum": 0 },
+        "audit_samples": { "type": "array", "items": { "type": "number", "minimum": 0 } },
+        "gas_samples": { "type": "array", "items": { "type": "number", "minimum": 0 } },
+        "calldata_samples": { "type": "array", "items": { "type": "number", "minimum": 0 } },
+        "transactions": { "type": "array", "items": { "type": "object" } }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

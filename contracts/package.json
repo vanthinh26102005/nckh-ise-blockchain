@@ -8,6 +8,8 @@
   },
   "scripts": {
     "anvil:smoke": "node test/anvil_sp1_smoke.mjs",
-    "anvil:e2-anchor": "node test/anvil_sp1_anchor_server.mjs"
+    "anvil:e2-anchor": "node test/anvil_sp1_anchor_server.mjs",
+    "anvil:e3-smoke": "node test/anvil_e3_smoke.mjs",
+    "anvil:e3-vecro-smoke": "node test/anvil_e3_vecro_smoke.mjs"
   }
 }
