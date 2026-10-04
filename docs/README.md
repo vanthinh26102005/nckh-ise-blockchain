@@ -6,6 +6,9 @@
 - `reports/research_plan_from_draft.md`: cách nhóm chuyển draft định hướng thành bốn experiment E1–E4 và các decision gate còn lại.
 - `reports/e1_teacher_report.md`: E1 — policy C1–C5, proof paths và ranh giới benchmark còn thiếu.
 - `reports/e2_teacher_report.md`: E2 — evidence Fabric → SP1 → Anvil và ranh giới latency benchmark còn thiếu.
+- `reports/e3_teacher_report.md`: E3 — recursive epoch gate, bốn baseline và điều kiện có kết quả so sánh chính thức.
+- `reports/e4_teacher_report.md`: E4 — grid 350 run, preflight CPU/GPU, scalability và phần benchmark còn thiếu.
+- `reports/e3_recursive_gate.md`, `reports/e3_methodology.md`, `reports/e4_methodology.md`: protocol kỹ thuật để chạy và xác thực E3/E4.
 - `reports/current_progress_vs_draft.md`: đối chiếu implementation hiện tại với draft paper, thay đổi phương pháp và next steps.
 - `reports/e1_e2_implementation_update.md`: nhật ký kỹ thuật chi tiết của PR #17–#19 và lần kiểm chứng E2E gần nhất.
 - `reports/e2_latency_experiment_notes.md`: ghi chú **archive** về E2 mô phỏng; không dùng làm evidence latency Fabric → Anvil.

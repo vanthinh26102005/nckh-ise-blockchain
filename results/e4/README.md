@@ -2,6 +2,10 @@
 
 Xem phương pháp: [`docs/reports/e4_methodology.md`](../../docs/reports/e4_methodology.md) · Issue #22.
 
+**Trạng thái cập nhật 04/10/2026:** đã có executor thật, preflight và shard merge.
+Checkout hiện chỉ có plan/summary, chưa có kết quả screening/confirmation GPU
+chính thức. Xem [báo cáo E4 cho giảng viên](../../docs/reports/e4_teacher_report.md).
+
 ## Bố cục
 
 ```
@@ -34,8 +38,11 @@ make e4-plan
 make e4-run-mock
 make e4-analyze-mock
 
-# 3) Chạy chính — CHỈ sau khi E3 aggregate proof gate pass (executor real-e3)
-#    RealE3Executor trong scripts/e4_run.py hiện là stub, chờ cắm pipeline E3.
+# 3) Chạy chính — sau E3 gate và preflight CPU/GPU cùng commit/compute host.
+#    RealE3Executor đã gọi binary Rust e4_real_cell; không còn là stub.
+#    Chọn một E4_PLAN_INDEX hoặc E4_PLAN_RUN_ID mỗi invocation để tạo shard.
+#    Đặt E4_RUN_ROOT ngoài Git, E3_GATE_MANIFEST và E4_PREFLIGHT trước khi chạy.
+#    Ghép đủ shard của phase bằng e4_merge.py rồi chạy analyzer chính thức.
 ```
 
 Executor `mock` chỉ để kiểm thử harness/schema/analysis. Số liệu E4 chính thức yêu cầu
