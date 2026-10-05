@@ -1,0 +1,81 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{draw-paper}[2026/08/09 Publication figure styles for the draw skill]
+
+\RequirePackage{amsmath,amssymb}
+\RequirePackage{lmodern}
+\RequirePackage{xcolor}
+\RequirePackage{tikz}
+\usetikzlibrary{arrows.meta,backgrounds,calc,fit,matrix,positioning,shapes.geometric}
+\RequirePackage{pgfplots}
+\usepgfplotslibrary{fillbetween,groupplots,statistics}
+\pgfplotsset{compat=1.18}
+
+% Restrained color-vision-safe palette. Pair every color with shape, marker,
+% line style, label, or position; color must never be the only encoding.
+\definecolor{drawInk}{HTML}{17324D}
+\definecolor{drawSlate}{HTML}{667788}
+\definecolor{drawLight}{HTML}{F5F7FA}
+\definecolor{drawGrid}{HTML}{D7DDE5}
+\definecolor{drawBlue}{HTML}{0072B2}
+\definecolor{drawSky}{HTML}{56B4E9}
+\definecolor{drawTeal}{HTML}{009E73}
+\definecolor{drawAmber}{HTML}{D99100}
+\definecolor{drawOrange}{HTML}{D55E00}
+\definecolor{drawPlum}{HTML}{8E5AA9}
+\definecolor{drawRose}{HTML}{C44E75}
+
+\tikzset{
+  draw canvas/.style={x=1mm,y=1mm,font=\sffamily\fontsize{7.0}{7.9}\selectfont},
+  draw card/.style={rounded corners=1.5mm,draw=drawInk!38,fill=white,
+    line width=0.55pt,align=center,inner xsep=2.2mm,inner ysep=1.7mm},
+  draw header/.style={rounded corners=1.2mm,fill=drawInk,text=white,
+    line width=0pt,align=center,font=\sffamily\bfseries\fontsize{7.4}{8.2}\selectfont,
+    inner xsep=2mm,inner ysep=1.2mm},
+  draw zone/.style={rounded corners=1.0mm,draw=drawSlate!65,dashed,
+    line width=0.55pt,fill=white,fill opacity=0.25},
+  draw pill/.style={rounded corners=2.2mm,draw=drawInk!28,fill=white,
+    line width=0.45pt,align=center,inner xsep=1.7mm,inner ysep=0.9mm,
+    font=\sffamily\fontsize{6.7}{7.4}\selectfont},
+  draw port/.style={circle,draw=white,fill=drawInk,line width=0.45pt,
+    minimum size=2.6mm,inner sep=0pt},
+  draw primary/.style={-{Latex[length=2.1mm,width=1.45mm]},draw=drawInk,
+    line width=0.90pt},
+  draw support/.style={-{Latex[length=1.9mm,width=1.30mm]},draw=drawSlate,
+    line width=0.76pt,densely dashed},
+  draw reject/.style={-{Latex[length=1.9mm,width=1.30mm]},draw=drawRose,
+    line width=0.78pt},
+  draw annotation/.style={rounded corners=0.8mm,fill=white,fill opacity=0.94,
+    text opacity=1,inner xsep=1.0mm,inner ysep=0.6mm,
+    font=\sffamily\fontsize{6.4}{7.1}\selectfont}
+}
+
+\pgfplotsset{
+  draw axis/.style={
+    scale only axis,
+    axis line style={draw=drawInk!80,line width=0.52pt},
+    tick style={draw=drawInk!80,line width=0.52pt},
+    tick align=outside,
+    tick label style={font=\sffamily\fontsize{6.6}{7.3}\selectfont,text=drawInk},
+    label style={font=\sffamily\fontsize{7.2}{8.0}\selectfont,text=drawInk},
+    title style={font=\sffamily\bfseries\fontsize{7.4}{8.2}\selectfont,text=drawInk,
+      yshift=0.8mm},
+    legend style={draw=none,fill=none,font=\sffamily\fontsize{6.5}{7.2}\selectfont,
+      row sep=-1pt,column sep=2.2mm,/tikz/every even column/.append style={column sep=1.2mm}},
+    grid style={draw=drawGrid,line width=0.34pt},
+    major grid style={draw=drawGrid,line width=0.34pt},
+    minor grid style={draw=drawGrid!65,line width=0.25pt},
+    clip marker paths=true,
+    every axis plot/.append style={line width=0.92pt},
+  },
+  draw method a/.style={draw=drawBlue,fill=drawBlue,mark=*,mark size=1.7pt},
+  draw method b/.style={draw=drawOrange,fill=drawOrange,mark=square*,mark size=1.6pt},
+  draw method c/.style={draw=drawTeal,fill=drawTeal,mark=triangle*,mark size=1.9pt},
+  draw neutral/.style={draw=drawSlate,fill=drawSlate,mark=diamond*,mark size=1.8pt},
+  draw band a/.style={draw=none,fill=drawBlue!14},
+  draw band b/.style={draw=none,fill=drawOrange!14}
+}
+
+\newcommand{\DrawPanelLabel}[3]{%
+  \node[anchor=north west,font=\sffamily\bfseries\fontsize{8.2}{9.0}\selectfont,
+    text=drawInk] at (#1,#2) {#3};%
+}

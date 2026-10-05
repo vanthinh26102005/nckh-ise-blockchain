@@ -11,6 +11,8 @@ Bản cập nhật đối chiếu source tới commit `14a7bab` (25/09/2026). Ev
 
 Review bổ sung PR #32 ở head `c0e5dfa`: đã nhập report local ngày 29/09 nguyên văn, kiểm tra bảng/lockfile và ghi [giới hạn xác thực E1](../../results/e1/local-cpu-2026-09-29/review.md). PR chưa được merge trong lần cập nhật này; kết quả local không thay thế CPU Slurm issue #25.
 
+**Bổ sung sau khi đọc paper thầy gửi ngày 04/10:** bản LNCS mới trong `EPCIS_ACIIDS_2026_ThinhTriNhan/` đã mô tả Path A/SP1 và Path B/Plonky3, ghi nhận smoke E2 và đưa checklist 20 task. Đối chiếu source xác nhận còn ba yêu cầu trước benchmark chính thức: registry binding B1, key-bound nullifier/index rộng B2 và hiding commitments B3. E1 còn cần cấu hình FRI mới và benchmark wrapper/SP1; báo cáo 600 phép đo base local chưa đóng các yêu cầu này. Xem [review paper mới](revised_paper_resource_review.md) để biết toàn bộ task, số liệu còn thiếu và các điểm cần đồng bộ A100/H200, ABI, metadata và protocol.
+
 ## 1. Đối chiếu draft và implementation
 
 | Hạng mục       | Draft định hướng                          | Hiện trạng implementation                                                          | Note                                                                                             |
@@ -83,10 +85,12 @@ Test Python của E3/E4 kiểm tra logic harness/analyzer và có synthetic/mock
 
 ## 5. Đề xuất bước tiếp theo
 
+Trước các bước benchmark bên dưới, hoàn thiện và kiểm thử B1–B3 của paper mới, chốt ABI/guest keys/source revision; sau đó tạo lại gate/preflight cho revision này. Kết quả trước sửa giữ nhãn lịch sử. Với Path B E1, chốt FRI production parameters và phạm vi đối chiếu trước khi chạy lại.
+
 1. Xác nhận phạm vi báo cáo hai proof paths và nhãn VeCroToken-adapted trước khi so sánh trong paper.
 2. Hoàn tất truy cập HPC H200 và kiểm tra trong GPU allocation: SP1 CUDA, runtime Fabric/Anvil và dung lượng RAM/VRAM. Đã nhận hướng dẫn truy cập không đồng nghĩa preflight benchmark đã pass.
 3. Chạy E3 recursive gate trên source revision sạch, lưu proof fixture/receipt ngoài Git và gate manifest đối chiếu được root. Chạy preflight CPU/GPU cho leaf 8/64 event và aggregate hai lot trên topology mục tiêu.
-4. Xác thực bundle E1 local trước khi đề xuất chạy lại; CPU Slurm E1 vẫn là deliverable riêng. Chạy E2 full benchmark, E3 120 paired run và E4 80 screening + 270 confirmation run theo protocol. Một topology dùng chung chỉ chạy một run/shard tại một thời điểm; chạy song song phải tách topology và cổng.
+4. Xác thực bundle E1 local để giữ evidence lịch sử; yêu cầu FRI mới của paper vẫn cần rerun C1–C5, wrapper và CPU/GPU SP1 measurements. CPU Slurm E1 là deliverable riêng. Chạy E2 full benchmark, E3 120 paired run và E4 80 screening + 270 confirmation run theo protocol. Một topology dùng chung chỉ chạy một run/shard tại một thời điểm; chạy song song phải tách topology và cổng.
 5. Với E4 chính thức, Fabric, Gateway, Anvil và prover phải cùng compute host đã preflight. Chạy dịch vụ trên VM và prove trên GPU node là split-host pilot, chưa đáp ứng tiêu chí hiện tại.
 6. Xác thực coverage, receipt, censoring và thống kê; sau đó đồng bộ `paper.tex` bằng số liệu thật. Không thay run lỗi/hết thời gian bằng mock.
 

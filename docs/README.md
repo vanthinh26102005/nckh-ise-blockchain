@@ -3,6 +3,7 @@
 - `stages/`: submission material grouped by Stage 1, Stage 2, and Stage 3.
 - `research/e1/`: E1 technical notes and the Week 2 teacher report.
 - `reports/`: báo cáo tiến độ gửi giảng viên và ghi chú thí nghiệm.
+- [Review paper mới và tài nguyên thầy gửi](reports/revised_paper_resource_review.md): 20 task, ba sửa bảo mật B1–B3, yêu cầu benchmark mới và đối chiếu với code/results hiện tại.
 - `reports/research_plan_from_draft.md`: cách nhóm chuyển draft định hướng thành bốn experiment E1–E4 và các decision gate còn lại.
 - `reports/e1_teacher_report.md`: E1 — policy C1–C5, full-grid base CPU local được báo cáo trong PR #32 và phần evidence còn chờ xác thực.
 - `reports/e2_teacher_report.md`: E2 — evidence Fabric → SP1 → Anvil và ranh giới latency benchmark còn thiếu.

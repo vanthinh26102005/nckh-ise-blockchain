@@ -1,0 +1,247 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[margin=18mm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{amsmath,amssymb}
+\usepackage{hyperref}
+\usepackage{xurl}
+\sloppy
+\hypersetup{colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!50!black}
+\setlist{nosep,leftmargin=*}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{4pt}
+
+% \task{ID}{title}{fills}{hardware}{time}{body}
+\newcommand{\task}[6]{%
+\par\medskip\noindent\colorbox{blue!8}{\parbox{\dimexpr\linewidth-2\fboxsep}{%
+\textbf{\texttt{#1}} \enspace #2\hfill{\small fills: \texttt{#3}}\\
+{\small hardware: #4 \quad$\cdot$\quad est.\ wall-clock: #5}}}\par
+\begin{itemize}#6\end{itemize}}
+\newcommand{\cmd}[1]{\par\noindent\hspace*{1em}\begin{minipage}[t]{\dimexpr\linewidth-1em}\raggedright\small\ttfamily #1\end{minipage}\par}
+
+\title{Implementation and Experiment Backlog\\[2pt]\large ACIIDS 2027 paper: \emph{Privacy-Preserving, Publicly Verifiable EUDR Compliance over EPCIS Event Data with Recursive Zero-Knowledge Proofs}}
+\author{Repository: \url{https://github.com/vanthinh26102005/nckh-ise-blockchain}}
+\date{Created 4 October 2026 \quad$\cdot$\quad Submission deadline 31 October 2026 (EasyChair)}
+
+\begin{document}
+\maketitle
+
+\section*{How to use this list}
+Every red slot \texttt{[ID: ...]} in \texttt{aciids2027/main.tex} is produced by the \texttt{\textbackslash pending\{ID\}\{...\}} macro. Each ID below states which slot it fills, the exact command, the acceptance criterion and the output path. A slot may be filled only with numbers that come from committed metadata and raw output stored outside Git, as required by the repository's rules (\texttt{results/README.md}). Every new number must also be added to \texttt{aciids2027/evidence\_ledger.md}. Before submission, set \texttt{\textbackslash finaltrue} in \texttt{main.tex}; compilation then fails while any slot remains.
+
+Commands assume the repository root as the working directory. Raw output goes under \texttt{/datastore/uitchain/...} (or any path outside Git).
+
+\paragraph{Critical path.}
+\texttt{T-SEC-01} $\rightarrow$ \texttt{T-E2-01} $\rightarrow$ \texttt{T-E3-01} (gate) $\rightarrow$ \texttt{T-E1-03} / \texttt{T-E2-02} / \texttt{T-E3-02} $\rightarrow$ \texttt{T-E4-01} $\rightarrow$ \texttt{T-E4-02} $\rightarrow$ \texttt{T-ABS-01}.
+Security fixes come first, because they change the leaf and epoch ABI and therefore invalidate every proof measured earlier.
+
+\section{Security fixes required by the paper's analysis (Section 5)}
+
+\task{T-SEC-01}{Registry binding of $R_C$ and $c_G$ (condition B1)}{B1 text, Prop.~1}{dev laptop}{2 days}{
+\item \textbf{Problem.} \texttt{epoch.rs::evaluate} does not check, and \texttt{EpochAggregateAnchor.sol} does not see, the leaf fields \texttt{certificate\_root} and \texttt{polygon\_commitment}. A prover can therefore use its own credential tree or polygon.
+\item \textbf{Change.}
+  \begin{itemize}
+  \item In \texttt{crates/sp1-e2e/policy/src/epoch.rs}, require every child to carry the same \texttt{certificate\_root} and \texttt{polygon\_commitment}.
+  \item Append both fields to \texttt{EpochPublicValues}, which changes the ABI from 288 to 352 bytes.
+  \item Hash both fields into $\Gamma$.
+  \item In \texttt{EpochAggregateAnchor.sol} and \texttt{EpochAnchor.sol}, add a \texttt{registry} (owner-settable mapping of accepted roots) and revert if either value is not registered.
+  \end{itemize}
+\item \textbf{Tests.}
+  \begin{itemize}
+  \item Rust unit test: an epoch with mismatching roots is rejected.
+  \item Anvil smoke (\texttt{contracts/test/anvil\_e3\_smoke.mjs}): an unregistered root reverts.
+  \item Rerun \texttt{make e3-check}.
+  \end{itemize}
+\item \textbf{Paper.} Change B1 from ``not yet enforced'' to ``enforced''. Update the 288-byte figure in Section~4.2 and the contract description in Section~4.3.
+}
+
+\task{T-SEC-03}{Key-bound nullifier and wider index (condition B2)}{B2 text}{dev laptop}{1.5 days}{
+\item \textbf{Change.}
+  \begin{itemize}
+  \item Derive $s=\mathrm{PRF}_{k}(\ell)$, where $k$ is the producer's nullifier key.
+  \item Commit $\mathsf{H}(k)$ inside the C2 credential leaf (\texttt{certificate\_leaf}).
+  \item The guest proves knowledge of $k$ and recomputes $s$, so it can no longer accept an arbitrary \texttt{nullifier\_secret}.
+  \item Replace the 32-bit index with the full 256-bit digest. Either use a 256-level sparse Merkle tree with cached empty-subtree hashes (\texttt{SparseNullifierMap} already has the needed structure) or an indexed Merkle tree.
+  \end{itemize}
+\item \textbf{Tests.} Claiming the same lot with two secrets must fail, and the existing tamper and replay tests must still pass.
+\item \textbf{Paper.} Update C5 in Definition~1 and the leaf description in Section~4.1, and mark B2 as enforced.
+}
+
+\task{T-SEC-02}{Hiding (salted) commitments (condition B3)}{B3 text}{dev laptop}{1 day}{
+\item \textbf{Change.}
+  \begin{itemize}
+  \item Add 32-byte nonces $r_G$ and $r_D$ to \texttt{PolicyInput}.
+  \item Set $c_G=\mathsf{H}(\text{tag}_G,r_G,k,G)$.
+  \item Build the event commitment as a Merkle root over salted event leaves $\mathsf{H}(\text{tag}_E,r_i,\mathsf{bytes}(e_i))$. This also enables subset openings for \texttt{T-SD-01}.
+  \end{itemize}
+\item \textbf{Paper.} Mark B3 as enforced and describe $D$ as a Merkle root in Section~3.4.
+}
+
+\section{Data model and functionality}
+
+\task{T-DM-01}{EPCIS 2.0 JSON-LD $\rightarrow$ \texttt{EpcisEventV1} mapper}{Sec.~3.2 slot}{dev laptop}{3 days}{
+\item Implement the mapping in Table~2 of the paper as \texttt{crates/sp1-e2e/policy/src/epcis\_jsonld.rs}, or as a Python tool in \texttt{scripts/}:
+  \begin{itemize}
+  \item \texttt{eventID} $\rightarrow$ 64-bit truncated SHA-256;
+  \item LGTIN $\rightarrow$ lot;
+  \item \texttt{readPoint} geo URI $\rightarrow$ micro-degrees;
+  \item \texttt{certificationInfo} $\rightarrow$ $\kappa$;
+  \item \texttt{bizStep} $\rightarrow$ role code.
+  \end{itemize}
+\item Validate against GS1 EPCIS 2.0 example documents. Reject events without geolocation.
+\item Aggregation and transformation events: encode parent and child lot edges, and add a continuity check that every input lot of a transformation has an anchored nullifier. This is a stretch goal. If it is not done by 25 Oct, keep it as future work in Section~7.
+}
+
+\task{T-SD-01}{Selective-disclosure view prototype}{Sec.~4.5 slot}{dev laptop}{2 days}{
+\item Depends on \texttt{T-SEC-02}.
+\item CLI \texttt{view-open} with options \texttt{--lot} and \texttt{--fields polygon,events[0..3],credential}. It outputs a JSON opening bundle.
+\item CLI \texttt{view-verify} recomputes $c_G$, the event Merkle root, $\Gamma$ and $R_C$, and checks them against the anchored event log on Anvil.
+\item Measure, for three views (regulator, importer, certifier): bundle size in bytes and verification time in ms, 30 repetitions each.
+\item Report in one sentence or a small table in Section~4.5.
+}
+
+\task{T-C1-01}{Plot-polygon and multi-polygon geofence (reviewer W4; future work if late)}{Sec.~7 slot}{dev laptop}{3 days}{
+\item EUDR Art.~2(28) describes plots larger than 4\,ha as polygons. C1 should therefore test \emph{polygon disjointness} (plot polygon $\cap$ forest-loss polygon $=\emptyset$) using exact integer segment-intersection tests, and not only point exclusion.
+\item C1 over a registry tree of forest-loss polygons per map tile. The prover shows that the point lies outside every polygon of its tile, together with a tile-completeness proof (a Merkle path of the tile's polygon list against the registered root).
+\item Source polygons: forest-loss alerts after 2020, e.g.\ Hansen/GFW, rasterised into vector polygons for the Central Highlands.
+\item If this is not done, keep the sentence in Section~7 and delete the slot.
+}
+
+\section{Experiments (Section 6)}
+
+\task{T-E2-01}{3-Raft Fabric topology and host record}{Sec.~6.2 slot}{A100 host (same host for Fabric, Anvil and prover)}{0.5 day}{
+\item Bring up the topology and check it:
+\cmd{bash infra/fabric/raft/bootstrap.sh up}
+\cmd{python3 scripts/e4\_preflight.py ...   \# must list 3 orderers + 2 peers}
+\item Record in the paper: CPU model, cores, RAM, GPU model and driver, CUDA, OS, Fabric image tags, Anvil version and SP1 version. Take them from \texttt{preflight.json}.
+}
+
+\task{T-E3-01}{Recursive epoch gate (aggregate proof $\rightarrow$ Anvil receipt)}{Table~5, $G_a$; Sec.~6.6}{A100}{0.5 day}{
+\item Run the gate:
+\cmd{make e3-gate E3\_FIXTURE=/datastore/uitchain/e3/gate.json E3\_RECEIPT=/datastore/uitchain/e3/receipt.json}
+\item \textbf{Acceptance.}
+  \begin{itemize}
+  \item \texttt{results/e3/gate\_manifest.json} exists, with receipt \texttt{status=1} and the expected new root.
+  \item The tampered aggregate is rejected.
+  \end{itemize}
+\item Record the aggregate gas $G_a$ and the calldata bytes. They give the ratio $mG_v/G_a$ used in Section~6.6.
+}
+
+\task{T-E1-01}{Path B rerun at production FRI parameters}{Table~4 row ``C1--C5 at $\ge$100-bit''}{Mac (8-core) and A100 host}{1 day}{
+\item In \texttt{crates/e1-bench/src/templates.rs}, set \texttt{FRI\_LOG\_BLOWUP=3}, \texttt{FRI\_NUM\_QUERIES=33} and \texttt{query\_proof\_of\_work\_bits=16}. That gives $\approx 3\cdot33+16=115$ conjectured bits. Add a unit test that asserts at least 100 bits.
+\item Run:
+\cmd{make e1-strict}
+\item Use events $\in\{8,16,32,64\}$, 30 seeds and \emph{all} of C1--C5, including C1. Check that C5 is the current depth-32 update and not the empty-leaf MVP.
+\item Align the Path B parameters with Path A, as asked by reviewer W5: credential depth (run both 6 and 16), and document the hash difference (Poseidon2 versus SHA-256) and C4 (preimage versus Ed25519).
+\item Replace the archived rows of Table~4, or keep them as a ``low-security'' column if space allows. Update the C2/C3 text in Section~6.4.
+}
+
+\task{T-E1-02}{Path B recursive wrapper benchmark}{Table~4 row ``Recursive wrapper''}{A100 host CPU}{1 day}{
+\item Run:
+\cmd{cargo run --release -p e1-bench --features recursion -- --circuits wrapper\_recursive\_plonky3 --events 8,64 --seeds 10 --out <raw>}
+\item Report prove time, verify time, proof size (postcard bytes) and peak RSS.
+}
+
+\task{T-E1-03}{SP1 leaf cost, CPU vs.\ GPU A/B}{Table~4 row ``SP1 leaf''}{A100}{1 day}{
+\item Reuse the CPU/GPU A/B from \texttt{make e4-preflight}: leaf proofs at $n=8$ and $n=64$, plus the two-lot aggregate.
+\item Report compressed-proof time, Groth16-wrap time, proof sizes and the GPU speed-up. Use $\ge5$ repetitions per configuration.
+}
+
+\task{T-E2-02}{Full RQ2 latency benchmark}{Sec.~6.5 slot}{A100}{about 30--40 h (30 seeds $\times$ 60 min, plus proving backlog)}{
+\item \textbf{Warning.} \texttt{make e2-strict} still runs the \emph{legacy mock} pipeline (\texttt{e2-bench}, with a mock L1 delay). Do \textbf{not} use it.
+\item Use the real runner:
+\cmd{cargo run --release --manifest-path crates/sp1-e2e/Cargo.toml -p sp1-e2e --features cuda \textbackslash}
+\cmd{\ \ --bin e2\_real\_benchmark -- --lambda-events-per-min 480 --duration-min 60 --seeds 30 \textbackslash}
+\cmd{\ \ --prover cuda --out /datastore/uitchain/e2/raw.jsonl --run-id <unique>}
+\cmd{python3 scripts/e2\_real\_analyze.py ...}
+\item Report median, IQR, P95 and P99, plus queue saturation. If the prover cannot keep up at 480 events/min, report saturation honestly. Then add the highest sustainable $\lambda$ as an extra row; do not shorten the run.
+}
+
+\task{T-E3-02}{RQ3: 4 modes $\times$ 30 seeds}{Table~5 (all cells)}{A100}{about 120 runs $\times$ $\le$2 h; use a Slurm array, one topology per job}{
+\item Run each mode and seed, with mode order rotated per seed:
+\cmd{make e3-run E3\_MODE=<fabric-only|hash-on-chain|vecro-adapted|proposed> E3\_SEED=<0..29> E3\_RAW\_ROOT=/datastore/uitchain/e3/raw}
+\item Analyse:
+\cmd{make e3-analyze E3\_RAW\_ROOT=/datastore/uitchain/e3/raw}
+\item \textbf{Acceptance.} \texttt{results/e3/comparison.json} contains the formal Wilcoxon and Bonferroni results; the analyser refuses partial data.
+\item Fill every Table~5 cell with median [IQR]. Add one sentence giving the $p$-values and Cliff's $\delta$ for the proposed mode against the VeCroToken-adapted mode.
+}
+
+\task{T-COST-01}{Gas $\rightarrow$ fiat conversion}{Sec.~6.7 slot}{dev laptop}{0.5 day}{
+\item Write a script \texttt{scripts/gas\_to\_usd.py} that takes the gas from the receipts, a stated gas price (gwei) and an ETH/USD rate, with a date and source cited.
+\item Report a sensitivity range: low, median and high gas price over a stated window.
+\item Never present Anvil gas as a mainnet fee without these stated assumptions.
+}
+
+\task{T-E4-01}{RQ4 screening (80 runs)}{Sec.~6.7 slot}{A100}{about 1--2 days}{
+\item Run each screening cell, then merge:
+\cmd{make e4-run E4\_PHASE=screening E4\_PLAN\_INDEX=<0..79> E4\_RUN\_ROOT=/datastore/uitchain/e4 \textbackslash}
+\cmd{\ \ E3\_GATE\_MANIFEST=results/e3/gate\_manifest.json E4\_PREFLIGHT=results/e4/preflight.json}
+\cmd{make e4-merge E4\_PHASE=screening E4\_RUN\_ROOT=/datastore/uitchain/e4}
+}
+
+\task{T-E4-02}{RQ4 confirmation (270 runs) and Figure~2}{Fig.~2 (\texttt{fig:rq4})}{A100}{about 3--5 days}{
+\item Run as \texttt{T-E4-01} with \texttt{E4\_PHASE=confirmation} and \texttt{E4\_PLAN\_INDEX=0..269}, then:
+\cmd{make e4-analyze E4\_RAW=... E4\_MANIFEST=...}
+\item Draw Figure~2 as a standalone PGFPlots figure with the \texttt{/draw} skill:
+  \begin{itemize}
+  \item panel (a): throughput and completion versus shipment size, one line per epoch length;
+  \item panel (b): gas and calldata per shipment.
+  \end{itemize}
+\item Show median and IQR, hatch censored or saturated cells, and size the figure to \texttt{\textbackslash textwidth}$\times$34\,mm.
+}
+
+\task{T-SEP-01}{Optional public-testnet run}{Sec.~7 slot}{any}{0.5 day}{
+\item Deploy \texttt{EpochAggregateAnchor} on Sepolia. Anchor 5 epochs and record the inclusion delay.
+\item If this is skipped, delete the slot and keep ``Anvil only'' in the limitations.
+}
+
+\section{Manuscript finalisation}
+
+\task{T-ABS-01}{Headline numbers in the abstract and conclusion}{Abstract, Sec.~8}{--}{1 h}{
+\item After \texttt{T-E2-02} and \texttt{T-E3-02}, write one sentence each, for example: ``Over 30 seeds at 480 events/min, median audit latency was X s (P95 Y s), and per-shipment settlement gas fell Z-fold relative to the VeCroToken-adapted mode ($p<0.001$).''
+}
+
+\task{T-DOC-01}{Authors' ORCIDs, funding and acknowledgement}{Credits block}{--}{1 h}{
+\item Add \texttt{\textbackslash orcidID\{...\}} for each author in \texttt{main.tex}.
+\item Add the funding source (grant number, e.g.\ UIT/VNU-HCM) to \texttt{\textbackslash ackname}.
+}
+
+\task{T-FIN-01}{Final gate before EasyChair}{--}{--}{2 h}{
+\item Set \texttt{\textbackslash finaltrue}; the file must compile with no pending slot.
+\item Check page count $\le15$ (\texttt{pdfinfo}) and that there are no overfull boxes.
+\item Check that every new number is listed in \texttt{evidence\_ledger.md}.
+\item Re-run \texttt{/ready}.
+\item Tag the repository version cited in the paper (\texttt{git tag aciids2027-v1}) and replace the footnote URL with the tag.
+}
+
+\section{Schedule (backward from 31 October 2026)}
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{@{}lXl@{}}
+\toprule
+Dates & Tasks & Owner (suggested) \\
+\midrule
+5--9 Oct & T-SEC-01, T-SEC-03, T-SEC-02 (ABI freeze on 9 Oct); T-E2-01 & Van-Thinh Ngo \\
+8--10 Oct & T-E1-01, T-E1-02 (Path B, independent of the ABI) & Duy-Nhan Tran \\
+10--12 Oct & T-E3-01 gate; T-E1-03 A/B preflight & Huu-Tri Phan \\
+12--16 Oct & T-E2-02 (30 seeds); T-DM-01; T-SD-01 & Ngo / Tran \\
+13--23 Oct & T-E3-02 (120 runs, Slurm array); T-COST-01 & Huu-Tri Phan \\
+20--28 Oct & T-E4-01, then T-E4-02 and Fig.~2 & Duy-Nhan Tran \\
+28--29 Oct & Fill all slots, T-ABS-01, T-DOC-01; internal review & Tuan-Dung Tran \\
+30 Oct & T-FIN-01, submit to EasyChair & Tuan-Dung Tran \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\paragraph{Fallback if compute runs late.}
+\begin{itemize}
+\item If E4 confirmation is incomplete by 28 Oct, report the 80-run screening grid only, with the single-seed caveat stated in the caption.
+\item If E3 is incomplete, the paper must \emph{not} claim the comparison. Delete Table~5, keep the analytic $mG_v/G_a$ argument with the measured $G_v$ and $G_a$ from \texttt{T-E3-01}, and reframe RQ3 as a cost model.
+\item Never fill a slot with pilot, mock or accelerated data.
+\end{itemize}
+
+\end{document}
