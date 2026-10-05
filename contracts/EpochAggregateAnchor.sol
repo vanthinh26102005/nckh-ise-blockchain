@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {ISP1Verifier} from "./sp1/ISP1Verifier.sol";
+import {PolicyRegistry} from "./PolicyRegistry.sol";
 
 /// @notice One SP1 aggregate Groth16 proof advances the nullifier root once per epoch.
 contract EpochAggregateAnchor {
@@ -15,6 +16,8 @@ contract EpochAggregateAnchor {
         bool valid;
         bytes32 leafVKeyDigest;
         bytes32 aggregateVKeyDigest;
+        bytes32 certificateRoot;
+        bytes32 polygonCommitment;
     }
 
     error DuplicateEpoch(uint64 epochId);
@@ -23,6 +26,11 @@ contract EpochAggregateAnchor {
     error UnexpectedEpoch(uint64 expected, uint64 received);
     error LeafVKeyMismatch(bytes32 expected, bytes32 received);
 
+    error InvalidPublicValuesLength(uint256 received);
+    error PolicyRootsNotAllowed(bytes32 certificateRoot, bytes32 polygonCommitment);
+    error StateRootNotAdvanced();
+
+    PolicyRegistry public immutable policyRegistry;
     ISP1Verifier public immutable verifier;
     bytes32 public immutable programVKey;
     bytes32 public immutable expectedLeafVKeyDigest;
@@ -40,7 +48,8 @@ contract EpochAggregateAnchor {
     );
 
     constructor(address verifier_, bytes32 programVKey_, bytes32 leafVKeyDigest_,
-        bytes32 aggregateVKeyDigest_, bytes32 initialRoot_) {
+        bytes32 aggregateVKeyDigest_, bytes32 initialRoot_, address policyRegistry_) {
+        policyRegistry = PolicyRegistry(policyRegistry_);
         verifier = ISP1Verifier(verifier_);
         programVKey = programVKey_;
         expectedLeafVKeyDigest = leafVKeyDigest_;
@@ -55,12 +64,17 @@ contract EpochAggregateAnchor {
         bytes calldata proof
     ) external {
         if (anchoredEpochs[expectedEpochId]) revert DuplicateEpoch(expectedEpochId);
+        if (publicValues.length != 352) revert InvalidPublicValuesLength(publicValues.length);
         verifier.verifyProof(programVKey, publicValues, proof);
         EpochPublicValues memory values = abi.decode(publicValues, (EpochPublicValues));
         if (!values.valid || values.lotCount == 0 ||
-            values.eventCount < values.lotCount * 8 || values.eventCount > values.lotCount * 64) {
+            values.eventCount < uint256(values.lotCount) * 8 || values.eventCount > uint256(values.lotCount) * 64) {
             revert InvalidEpochResult();
         }
+        if (!policyRegistry.allowedPolicies(values.certificateRoot, values.polygonCommitment)) {
+            revert PolicyRootsNotAllowed(values.certificateRoot, values.polygonCommitment);
+        }
+        if (values.newNullifierRoot == values.oldNullifierRoot) revert StateRootNotAdvanced();
         if (values.epochId != expectedEpochId) revert UnexpectedEpoch(expectedEpochId, values.epochId);
         if (values.leafVKeyDigest != expectedLeafVKeyDigest) {
             revert LeafVKeyMismatch(expectedLeafVKeyDigest, values.leafVKeyDigest);
