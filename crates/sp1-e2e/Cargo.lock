@@ -1233,6 +1233,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "epcis-mapper"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "ed25519-dalek",
+ "eudr-policy",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1262,6 +1274,7 @@ name = "eudr-policy"
 version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
+ "hmac",
  "sha2 0.10.9",
 ]
 
@@ -4727,8 +4740,11 @@ dependencies = [
  "clap",
  "e2-bench",
  "ed25519-dalek",
+ "epcis-mapper",
  "eudr-policy",
+ "getrandom 0.2.17",
  "hex",
+ "serde",
  "serde_json",
  "sha2 0.10.9",
  "sp1-build",
