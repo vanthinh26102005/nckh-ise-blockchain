@@ -1,0 +1,68 @@
+% DRAW-SPEC
+% message: Raw EPCIS events stay on Fabric; one recursive proof per epoch is
+%          settled on a public EVM contract; auditors check L1 plus openings.
+% reading-order: column 1 top-down (L0), then prover column, then L1 column.
+% nodes: prod, canon, fabric, leaf, agg, pathb, registry, anchor, auditor.
+% edges:
+%   prod -> canon      : signed EPCIS 2.0 events, normalised
+%   canon -> fabric    : committed record + SHA-256
+%   fabric -> leaf     : committed events of one lot
+%   fabric -> pathb    : same witnesses, cost analysis [dashed]
+%   leaf -> agg        : leaf proofs (<= 8 per node)
+%   agg -> anchor      : Groth16 proof pi with epoch statement (named in agg card)
+%   registry -> anchor : registered roots R_C, c_G (B1) [dashed]
+%   anchor -> auditor  : anchored Gamma, rho
+%   fabric -> auditor  : off-chain openings V [dotted]
+% boundaries: consortium (L0) | prover (off-chain) | public chain (L1).
+% target: 122 mm x 72 mm (LNCS \textwidth); final text >= 7 pt.
+
+\documentclass[tikz,border=0pt]{standalone}
+\usepackage{draw-paper}
+
+\def\FigureWidthMM{122}
+\def\FigureHeightMM{72}
+
+\begin{document}
+\begin{tikzpicture}[draw canvas,
+  card/.style={draw card,text width=#1},
+  card/.default=27mm]
+  \path[use as bounding box] (0,0) rectangle (\FigureWidthMM,\FigureHeightMM);
+
+  % ---- zones -----------------------------------------------------
+  \begin{scope}[on background layer]
+    \path[rounded corners=2mm,fill=drawLight] (2.5,2.5) rectangle (36.5,69.5);
+    \path[rounded corners=2mm,fill=drawSky!10] (40,2.5) rectangle (82.5,69.5);
+    \path[rounded corners=2mm,fill=drawTeal!8] (86,2.5) rectangle (119.5,69.5);
+  \end{scope}
+  \node[draw header] at (19.5,65) {Consortium (L0)};
+  \node[draw header] at (61.25,65) {Prover (off-chain)};
+  \node[draw header] at (102.75,65) {Public chain (L1)};
+
+  % ---- L0 column -------------------------------------------------
+  \node[card=29mm] (prod) at (19.5,52) {Producers, processors,\\ exporters sign EPCIS 2.0\\ events (Ed25519)};
+  \node[card=29mm] (canon) at (19.5,35.5) {Canonical record $e$\\ (86 B, one encoding)};
+  \node[card=29mm] (fabric) at (19.5,18) {Hyperledger Fabric\\ stores $e$ and SHA-256,\\ rejects duplicates};
+
+  % ---- prover column ----------------------------------------------
+  \node[card=37mm] (leaf) at (61.25,50.5) {Path A: leaf proof per lot (SP1)\\ C1 geofence, C2 credential,\\ C3 threshold/time,\\ C4 Ed25519, C5 nullifier};
+  \node[card=37mm] (agg) at (61.25,33) {Recursive aggregation $\mathcal{R}_{\mathsf{epoch}}$\\ (fan-in $\le 8$), root wrapped\\ in Groth16 proof $\pi$};
+  \node[card=37mm,draw=drawSlate,densely dashed] (pathb) at (61.25,18) {Path B: Plonky3 AIRs C1--C5\\ + recursive wrapper\\ (cost analysis only)};
+
+  % ---- L1 column --------------------------------------------------
+  \node[card=27mm,draw=drawSlate,densely dashed] (registry) at (102.75,53) {Registry authority\\ publishes $R_C$, $c_G$};
+  \node[card=27mm] (anchor) at (102.75,33) {Anchor contract:\\ verify $\pi$, VK digests,\\ root chain, no replay;\\ store $\rho$, emit $\Gamma$};
+  \node[card=27mm] (auditor) at (102.75,14) {Auditor / importer\\ checks L1 and\\ openings $\mathcal{V}$};
+
+  % ---- edges -------------------------------------------------------
+  \draw[draw primary] (prod.south) -- (canon.north);
+  \draw[draw primary] (canon.south) -- (fabric.north);
+  \draw[draw primary] ([yshift=3.5mm]fabric.east) -- (37.1,21.5) |- (leaf.west);
+  \draw[draw support] ([yshift=-2.5mm]fabric.east) -- ([yshift=-2.5mm]pathb.west);
+  \draw[draw primary] (leaf.south) -- (agg.north);
+  \draw[draw primary] (agg.east) -- (anchor.west);
+  \draw[draw support] (registry.south) -- node[draw annotation,right=0.3mm,align=left] {roots\\(B1)} (anchor.north);
+  \draw[draw primary] (anchor.south) -- node[draw annotation,right=0.3mm] {$\Gamma,\rho$} (auditor.north);
+  \draw[-{Latex[length=1.9mm,width=1.3mm]},draw=drawOrange,line width=0.76pt,dotted]
+    (fabric.south) -- (19.5,3.8) -- node[draw annotation,above=0.1mm,pos=0.5] {off-chain openings $\mathcal{V}$ (selective view)} (102.75,3.8) -- (auditor.south);
+\end{tikzpicture}
+\end{document}

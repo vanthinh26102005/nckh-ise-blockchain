@@ -1,6 +1,6 @@
 # Báo cáo E1 — Chính sách tuân thủ và đường chứng minh ZK
 
-**Ngày cập nhật:** 11/09/2026
+**Ngày cập nhật:** 04/10/2026
 **Mục tiêu nghiên cứu (RQ1):** Chi phí mật mã thay đổi thế nào theo kích thước lô EPCIS?
 
 ## 1. E1 giải quyết phần nào của đề tài
@@ -30,17 +30,35 @@ C1–C5 đều bind dữ liệu private với public commitments/root. Các test
 
 Điểm quan trọng: C4 của baseline không phải Ed25519 AIR. Chữ ký Ed25519 được kiểm tra thật trong guest SP1; vì guest execution nằm trong proof, kết quả xác minh chữ ký được bind vào proof E2E. Cách này khác với việc tự xây SHA-512/Ed25519 AIR trong Plonky3, nên báo cáo/paper phải gọi đúng tên hai phương án.
 
-## 4. Trạng thái E1 hiện tại
+## 4. Kết quả local CPU được báo cáo trong PR #32
 
-Đã hoàn thành phần **implementation và kiểm chứng logic**: canonical event, C1–C5, recursion Rust cho baseline, và policy guest dùng cho E2E. `cargo test --workspace` đã pass 32 test E1, 7 EPCIS integration test và 7 test E2 tại lần kiểm chứng gần nhất.
+Đã có [báo cáo local CPU ngày 29/09/2026](../../results/e1/local-cpu-2026-09-29/report.md), nhập nguyên văn từ [PR #32](https://github.com/vanthinh26102005/nckh-ise-blockchain/pull/32). Tác giả báo cáo **600/600 phép đo base C1–C5**: 5 circuit × 4 lot size `{8,16,32,64}` × 30 seed, `coffee-default`, `--jobs 1`, `--strict-output`. Máy chạy là Apple M1 Pro, 8 logical CPU, 32 GiB RAM, macOS 26.5; không dùng GPU. Setup/witness generation và warm-up được ghi là loại khỏi proving time.
 
-Chưa hoàn thành phần **thí nghiệm RQ1** của paper: chạy lặp 30 seeds cho các kích thước lô `{8, 16, 32, 64}`, ghi proof time, verify time, RAM và proof size; sau đó báo cáo median/IQR/CI. Không có số benchmark chưa đo nào được dùng làm kết quả nghiên cứu.
+Các số dưới đây là median **theo report của tác giả**, chưa được reviewer tái tính từ raw CSV:
 
-## 5. Kế hoạch để đóng E1
+| Circuit | Prove 8 event (s) | Prove 64 event (s) | Verify 64 event (ms) | Proof 64 event (byte) |
+|---|---:|---:|---:|---:|
+| C1 | 0.264216 | 2.135078 | 2.830 | 77,727 |
+| C2 | 0.006701 | 0.006744 | 1.005 | 33,154 |
+| C3 | 0.001075 | 0.007320 | 0.718 | 18,918 |
+| C4 | 0.002045 | 0.002048 | 0.762 | 23,258 |
+| C5 | 0.219932 | 0.219728 | 64.701 | 2,168,689 |
 
-1. Chốt một đường benchmark duy nhất (Plonky3 baseline hoặc SP1 deployment path) và cấu hình máy chạy.
-2. Chạy warm-up, sau đó 30 seeds/lô; template/artifact setup được ghi riêng, không lẫn vào proving time.
-3. Lưu raw result ngoài Git, tái tạo bảng/biểu đồ và kiểm tra regression.
-4. Cập nhật paper chỉ bằng số liệu đã đo, đồng thời nêu rõ đường chứng minh được đo.
+Report gốc có đủ median/IQR cho 20 ô. Peak memory được báo cáo là `0.091934 GiB` (~94,1 MiB), đo process-lifetime peak RSS trên macOS, gồm setup; không phải memory riêng cho từng circuit hoặc seed.
 
-**Kết luận:** E1 đã có mệnh đề tuân thủ và proof path hoạt động; chưa được gọi là E1 thực nghiệm hoàn chỉnh cho đến khi benchmark có kiểm soát ở trên hoàn tất.
+C1/C3 xử lý dãy event, nhưng C2 chỉ chứng minh một membership path depth 16 cho event được chọn, C4 một actor authorization và C5 một nullifier update của lot depth 32. Vì thế C2/C4/C5 gần như không đổi theo số event là đặc tính statement hiện tại; không được gọi chúng là N certificate/signature/nullifier checks. Bảng này không chứa recursive wrapper hoặc SP1 timing, và không phải measurement của một proof tổng hợp C1–C5.
+
+## 5. Trạng thái xác thực và việc còn lại
+
+Implementation và kiểm chứng logic đã có evidence lịch sử cho canonical event, C1–C5, recursion Rust và policy guest. Số test ghi trong bản báo cáo 11/09 là kết quả tại thời điểm đó; lần review này không chạy lại benchmark hoặc Rust tests.
+
+Ngày 04/10, reviewer xác nhận bảng đúng 20 ô, median nằm trong IQR, và hash `Cargo.lock` khớp repo. Tuy nhiên raw CSV/log/full metadata còn ở máy người chạy và chưa có artifact link truy cập được; source commit `9611f581dfc0d6be959df84db1155fce2ff9f2e6` không resolve được trên remote, source snapshot/local diff cũng chưa được chia sẻ. Do đó trạng thái hiện tại là **full grid base E1 local CPU được báo cáo, chờ xác thực evidence**, thay cho câu cũ “chưa có benchmark 30 seed”. Xem [review chi tiết](../../results/e1/local-cpu-2026-09-29/review.md).
+
+## 6. Kế hoạch để đóng E1
+
+1. Chia sẻ bundle raw CSV, full metadata, log, source snapshot/diff và command cho reviewer; giữ raw ngoài Git và đối chiếu checksum đã ghi.
+2. Xác nhận đúng 600 record/20 ô, seed 1–30 không thiếu/trùng, rồi tái tạo median/IQR, summary/CI và figure từ raw. Không tạo raw từ bảng median.
+3. Chốt Plonky3 base CPU là measurement được đưa vào RQ1; giữ recursion/SP1 và toàn pipeline thành phép đo riêng.
+4. Chạy CPU Slurm theo issue #25 nếu vẫn là deliverable đã chọn; kết quả local không đóng yêu cầu Slurm. Sau khi evidence được xác thực, cập nhật paper với hardware, timing boundary và giới hạn statement.
+
+**Kết luận:** E1 đã có báo cáo full grid base CPU local, nhưng review dữ liệu chưa hoàn tất. Chưa gọi toàn bộ RQ1, recursive benchmark hay CPU Slurm experiment là hoàn thành từ PR #32.
