@@ -9,6 +9,12 @@ pub type F = Goldilocks;
 pub const THRESHOLD: u64 = 900;
 pub const RANGE_BITS: usize = 32;
 pub const STRICT_MERKLE_DEPTH: usize = 16;
+pub const FRI_LOG_BLOWUP: usize = 3;
+pub const FRI_NUM_QUERIES: usize = 33;
+pub const FRI_QUERY_POW_BITS: usize = 16;
+// Checklist model only: 3 * 33 + 16 = approximately 115 conjectured bits.
+// This excludes protocol/hash/field bounds and is not a security certification.
+pub const FRI_CONJECTURED_BITS: usize = FRI_LOG_BLOWUP * FRI_NUM_QUERIES + FRI_QUERY_POW_BITS;
 pub const STRICT_MERKLE_LEAVES: usize = 1 << STRICT_MERKLE_DEPTH;
 pub const POSEIDON_TAG_CERT: u64 = 2;
 pub const POSEIDON_TAG_ACTOR: u64 = 4;
@@ -55,7 +61,7 @@ impl CircuitKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::C1 => "c1_polygon_outside",
-            Self::C2 => "c2_poseidon2_merkle_depth16",
+            Self::C2 => "c2_poseidon2_merkle",
             Self::C3 => "c3_threshold_time",
             Self::C4 => "c4_poseidon2_actor_authorization",
             Self::C5 => "c5_poseidon2_sparse_nullifier_depth32",
@@ -67,7 +73,7 @@ impl CircuitKind {
     pub fn version(self) -> &'static str {
         match self {
             Self::C1 => "v4-plonky3-wgs84-polygon-poseidon2-commitments",
-            Self::C2 => "v4-plonky3-poseidon2-merkle-depth16",
+            Self::C2 => "v5-plonky3-poseidon2-merkle-selectable-depth",
             Self::C3 => "v4-plonky3-threshold-time",
             Self::C4 => "v4-plonky3-poseidon2-actor-authorization",
             Self::C5 => "v5-plonky3-poseidon2-sparse-nullifier-depth32",
@@ -146,6 +152,7 @@ impl fmt::Display for Profile {
 
 pub struct BenchmarkOptions {
     pub out: PathBuf,
+    pub credential_depth: usize,
     pub events_per_lot: Vec<usize>,
     pub seeds: usize,
     pub circuits: Vec<CircuitKind>,
@@ -160,19 +167,26 @@ pub struct MetricRow {
     pub seed: usize,
     pub events_per_lot: usize,
     pub circuit: String,
-    pub prove_ms: f64,
-    pub verify_ms: f64,
-    pub proof_bytes: usize,
-    pub peak_rss_mb: f64,
+    pub credential_depth: usize,
+    pub semantic_scope: String,
+    pub hash: String,
+    pub fri_log_blowup: usize,
+    pub fri_num_queries: usize,
+    pub fri_query_pow_bits: usize,
+    pub security_model: String,
+    pub prove_ms: Option<f64>,
+    pub verify_ms: Option<f64>,
+    pub proof_bytes: Option<usize>,
+    pub peak_rss_mb: Option<f64>,
     pub status: String,
     pub note: String,
     pub circuit_version: String,
-    pub build_ms: f64,
-    pub witness_ms: f64,
-    pub setup_ms: f64,
-    pub gate_count: usize,
+    pub build_ms: Option<f64>,
+    pub witness_ms: Option<f64>,
+    pub setup_ms: Option<f64>,
+    pub gate_count: Option<usize>,
     pub public_inputs: usize,
-    pub inner_prove_ms: f64,
+    pub inner_prove_ms: Option<f64>,
 }
 
 pub fn f(value: u64) -> F {

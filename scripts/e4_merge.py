@@ -31,7 +31,7 @@ def merge(plan_rows, shards, phase):
         row = expected[run_id]
         if any(str(record[key]) != row[key] for key in ("np", "shipment", "epoch_s", "seed")):
             raise ValueError(f"E4 shard does not match plan axes: {run_id}")
-        fixed = ("executor", "phase", "e3_gate_passed", "e3_manifest_ref", "preflight_ab", "software", "topology")
+        fixed = ("executor", "phase", "e3_gate_passed", "e3_manifest_ref", "preflight_ab", "software", "topology", "protocolVersion", "verificationKind", "registry_manifest_sha256", "acceptedPolicies", "trustedWorkloads", "hardware")
         if template and any(manifest.get(key) != template.get(key) for key in fixed):
             raise ValueError(f"E4 shard manifest differs from first shard: {raw}")
         if manifest.get("executor") != "real-e3":

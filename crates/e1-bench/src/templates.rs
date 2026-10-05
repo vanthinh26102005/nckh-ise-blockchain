@@ -2,9 +2,9 @@ use crate::backend::ProofStats;
 use crate::epcis::{EpcisEventV1, PointE6, SimplePolygon, MAX_POLYGON_VERTICES};
 use crate::synthetic::{poseidon2_permute, tampered_actor_lot, SyntheticLot};
 use crate::types::{
-    f, signed_f, CircuitKind, Profile, F, POSEIDON_TAG_CERT, POSEIDON_TAG_EMPTY,
-    POSEIDON_TAG_EVENT_BATCH, POSEIDON_TAG_NULLIFIER, POSEIDON_TAG_NULLIFIER_INDEX,
-    POSEIDON_TAG_POLYGON, RANGE_BITS, STRICT_MERKLE_DEPTH, STRICT_MERKLE_LEAVES, THRESHOLD,
+    f, signed_f, CircuitKind, Profile, F, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, FRI_QUERY_POW_BITS,
+    POSEIDON_TAG_CERT, POSEIDON_TAG_EMPTY, POSEIDON_TAG_EVENT_BATCH, POSEIDON_TAG_NULLIFIER,
+    POSEIDON_TAG_NULLIFIER_INDEX, POSEIDON_TAG_POLYGON, RANGE_BITS, STRICT_MERKLE_DEPTH, THRESHOLD,
 };
 use anyhow::{anyhow, bail, Result};
 use core::borrow::Borrow;
@@ -65,8 +65,6 @@ use std::time::Instant;
 const POSEIDON_WIDTH: usize = 8;
 const GOLDILOCKS_SBOX_DEGREE: u64 = 7;
 const SBOX_REGISTERS: usize = 1;
-const FRI_LOG_BLOWUP: usize = 2;
-const FRI_NUM_QUERIES: usize = 8;
 // A FRI proof with `log_final_poly_len = 0` still needs one fold phase, so the
 // smallest valid trace has 2^(log_blowup + 1) rows.
 const MIN_FRI_TRACE_ROWS: usize = 1 << (FRI_LOG_BLOWUP + 1);
@@ -79,7 +77,6 @@ const POSEIDON_COLS: usize = p3_poseidon2_air::num_cols::<
     HALF_FULL_ROUNDS,
     PARTIAL_ROUNDS,
 >();
-const C2_VECTOR_LANES: usize = 32;
 const C2_INDEX_BIT_COL: usize = POSEIDON_COLS;
 const C2_IS_REAL_COL: usize = C2_INDEX_BIT_COL + 1;
 const C2_LEVEL_COL: usize = C2_IS_REAL_COL + 1;
@@ -175,9 +172,21 @@ pub struct TemplateCache {
 
 impl TemplateCache {
     pub fn build(events: usize, profile: Profile, circuits: &[CircuitKind]) -> Result<Self> {
+        Self::build_with_depth(events, profile, circuits, STRICT_MERKLE_DEPTH)
+    }
+
+    pub fn build_with_depth(
+        events: usize,
+        profile: Profile,
+        circuits: &[CircuitKind],
+        credential_depth: usize,
+    ) -> Result<Self> {
         let mut templates = HashMap::new();
         for &kind in circuits {
-            templates.insert(kind, build_template(kind, events, profile)?);
+            templates.insert(
+                kind,
+                build_template_with_depth(kind, events, profile, credential_depth)?,
+            );
         }
         if circuits.contains(&CircuitKind::Wrapper) {
             for kind in [
@@ -187,9 +196,12 @@ impl TemplateCache {
                 CircuitKind::C4,
                 CircuitKind::C5,
             ] {
-                templates
-                    .entry(kind)
-                    .or_insert(build_template(kind, events, profile)?);
+                templates.entry(kind).or_insert(build_template_with_depth(
+                    kind,
+                    events,
+                    profile,
+                    credential_depth,
+                )?);
             }
         }
         Ok(Self { templates })
@@ -205,6 +217,7 @@ impl TemplateCache {
 #[derive(Clone)]
 pub struct CircuitTemplate {
     pub kind: CircuitKind,
+    pub credential_depth: usize,
     pub build_ms: f64,
     pub gate_count: usize,
     pub public_inputs: usize,
@@ -243,6 +256,18 @@ pub fn build_template(
     events: usize,
     profile: Profile,
 ) -> Result<CircuitTemplate> {
+    build_template_with_depth(kind, events, profile, STRICT_MERKLE_DEPTH)
+}
+
+pub fn build_template_with_depth(
+    kind: CircuitKind,
+    events: usize,
+    profile: Profile,
+    credential_depth: usize,
+) -> Result<CircuitTemplate> {
+    if ![6, 16].contains(&credential_depth) {
+        bail!("credential depth must be 6 or 16");
+    }
     let start = Instant::now();
     let (public_inputs, note) = match kind {
         CircuitKind::C1 => (
@@ -276,6 +301,7 @@ pub fn build_template(
     };
     Ok(CircuitTemplate {
         kind,
+        credential_depth,
         build_ms: start.elapsed().as_secs_f64() * 1000.0,
         gate_count: 0,
         public_inputs,
@@ -296,7 +322,7 @@ pub fn prove_and_verify(
     }
     match template.kind {
         CircuitKind::C1 => prove_c1(lot, template.events),
-        CircuitKind::C2 => prove_c2(lot, seed, template.events),
+        CircuitKind::C2 => prove_c2(lot, seed, template.events, template.credential_depth),
         CircuitKind::C3 => prove_c3(lot, template.events),
         CircuitKind::C4 => prove_c4(lot),
         CircuitKind::C5 => prove_c5(lot),
@@ -337,7 +363,13 @@ pub fn witness_for(
             let _ = c1_serial_trace_and_pis(lot, template.events)?;
         }
         CircuitKind::C2 => {
-            let _ = c2_trace_and_pis(lot, seed, template.events, None)?;
+            let _ = c2_trace_and_pis_with_depth(
+                lot,
+                seed,
+                template.events,
+                None,
+                template.credential_depth,
+            )?;
         }
         CircuitKind::C3 => validate_c3(lot, template.events)?,
         CircuitKind::C4 => {
@@ -379,7 +411,7 @@ fn config() -> MyConfig {
         max_log_arity: 1,
         num_queries: FRI_NUM_QUERIES,
         commit_proof_of_work_bits: 0,
-        query_proof_of_work_bits: 0,
+        query_proof_of_work_bits: FRI_QUERY_POW_BITS,
         mmcs: challenge_mmcs,
     };
     let pcs = Pcs::new(dft, val_mmcs, fri_params);
@@ -505,7 +537,7 @@ fn recursion_config() -> RecursionConfig {
             FRI_LOG_BLOWUP,
             0,
             0,
-            0,
+            FRI_QUERY_POW_BITS,
             FRI_NUM_QUERIES,
             Poseidon2Config::GOLDILOCKS_D2_W8,
         ),
@@ -639,9 +671,21 @@ pub fn prove_recursive_wrapper(
     events: usize,
     _profile: Profile,
 ) -> Result<RecursiveProofStats> {
+    prove_recursive_wrapper_with_depth(lot, seed, events, _profile, STRICT_MERKLE_DEPTH)
+}
+
+#[cfg(feature = "recursion")]
+pub fn prove_recursive_wrapper_with_depth(
+    lot: &SyntheticLot,
+    seed: usize,
+    events: usize,
+    _profile: Profile,
+    credential_depth: usize,
+) -> Result<RecursiveProofStats> {
     let witness_start = Instant::now();
     let (c1_trace, c1_pis) = c1_serial_trace_and_pis(lot, events)?;
-    let (c2_trace, c2_pis) = c2_trace_and_pis(lot, seed, events, None)?;
+    let (c2_trace, c2_pis) =
+        c2_trace_and_pis_with_depth(lot, seed, events, None, credential_depth)?;
     validate_c3(lot, events)?;
     let c3_trace = c3_trace(lot, events)?;
     let c3_pis = vec![f(THRESHOLD), f(events as u64)];
@@ -654,7 +698,9 @@ pub fn prove_recursive_wrapper(
         events,
         level: usize::MAX,
     };
-    let c2_air = C2MerkleAir;
+    let c2_air = C2MerkleAir {
+        depth: credential_depth,
+    };
     let c3_air = C3Air;
     let c4_air = PoseidonStatementAir {
         public_input_indices: [Some(0), None, Some(2), None],
@@ -1492,7 +1538,7 @@ fn validate_c3(lot: &SyntheticLot, events: usize) -> Result<()> {
 }
 
 fn c3_trace(lot: &SyntheticLot, events: usize) -> Result<RowMajorMatrix<F>> {
-    let rows = events.next_power_of_two().max(2);
+    let rows = events.next_power_of_two().max(MIN_FRI_TRACE_ROWS);
     let mut values = vec![F::ZERO; rows * C3_WIDTH];
     for row in 0..rows {
         let src = row.min(events - 1);
@@ -1622,7 +1668,9 @@ fn assert_range<AB: AirBuilder<F = F>>(
     builder.assert_zero(value - recomposed);
 }
 
-pub struct C2MerkleAir;
+pub struct C2MerkleAir {
+    depth: usize,
+}
 
 impl BaseAir<F> for C2MerkleAir {
     fn width(&self) -> usize {
@@ -1695,8 +1743,7 @@ impl<AB: AirBuilder<F = F>> Air<AB> for C2MerkleAir {
 
             let one_minus_next: AB::Expr = F::ONE.into();
             let ends_path = local_real * (one_minus_next - next_real);
-            transition
-                .assert_zero(ends_path.clone() * (local_level - f(STRICT_MERKLE_DEPTH as u64)));
+            transition.assert_zero(ends_path.clone() * (local_level - f(self.depth as u64)));
             transition.assert_zero(ends_path * (local_output - root_pub));
         }
 
@@ -2007,11 +2054,22 @@ enum C4Tamper {
     WrongCommitment,
 }
 
-fn prove_c2(lot: &SyntheticLot, seed: usize, events: usize) -> Result<ProofStats> {
+fn prove_c2(
+    lot: &SyntheticLot,
+    seed: usize,
+    events: usize,
+    credential_depth: usize,
+) -> Result<ProofStats> {
     let witness_start = Instant::now();
-    let (trace, pis) = c2_trace_and_pis(lot, seed, events, None)?;
+    let (trace, pis) = c2_trace_and_pis_with_depth(lot, seed, events, None, credential_depth)?;
     let witness_ms = witness_start.elapsed().as_secs_f64() * 1000.0;
-    let (prove_ms, verify_ms, proof_bytes) = prove_stark(&C2MerkleAir, trace, &pis)?;
+    let (prove_ms, verify_ms, proof_bytes) = prove_stark(
+        &C2MerkleAir {
+            depth: credential_depth,
+        },
+        trace,
+        &pis,
+    )?;
     Ok(ProofStats {
         witness_ms,
         prove_ms,
@@ -2020,13 +2078,24 @@ fn prove_c2(lot: &SyntheticLot, seed: usize, events: usize) -> Result<ProofStats
     })
 }
 
+#[cfg(test)]
 fn c2_trace_and_pis(
     lot: &SyntheticLot,
     seed: usize,
     events: usize,
     tamper: Option<PathTamper>,
 ) -> Result<(RowMajorMatrix<F>, Vec<F>)> {
-    let witness = c2_path_witness(lot, seed, events, tamper)?;
+    c2_trace_and_pis_with_depth(lot, seed, events, tamper, STRICT_MERKLE_DEPTH)
+}
+
+fn c2_trace_and_pis_with_depth(
+    lot: &SyntheticLot,
+    seed: usize,
+    events: usize,
+    tamper: Option<PathTamper>,
+    credential_depth: usize,
+) -> Result<(RowMajorMatrix<F>, Vec<F>)> {
+    let witness = c2_path_witness(lot, seed, events, tamper, credential_depth)?;
     Ok((
         c2_trace(witness.inputs, &witness.index_bits),
         vec![witness.root],
@@ -2044,22 +2113,27 @@ fn c2_path_witness(
     seed: usize,
     events: usize,
     tamper: Option<PathTamper>,
+    credential_depth: usize,
 ) -> Result<C2PathWitness> {
-    if events == 0 || events > STRICT_MERKLE_LEAVES {
-        bail!("c2 requires 1..={STRICT_MERKLE_LEAVES} events");
+    if ![6, 16].contains(&credential_depth) {
+        bail!("credential depth must be 6 or 16");
+    }
+    let leaves_count = 1 << credential_depth;
+    if events == 0 || events > leaves_count {
+        bail!("c2 requires 1..={leaves_count} events");
     }
     if lot.readings.len() < events || lot.timestamps.len() < events || lot.cert_ids.len() < events {
         bail!("synthetic lot has fewer C2 rows than requested events");
     }
 
     let event_index = seed % events;
-    let mut leaves = (0..STRICT_MERKLE_LEAVES)
+    let mut leaves = (0..leaves_count)
         .map(|i| c2_leaf_hash(lot, i, events))
         .collect::<Vec<_>>();
     let leaf_input = c2_event_leaf_input(lot, event_index);
     let mut current = poseidon2_permute(leaf_input)[0];
-    let mut inputs = Vec::with_capacity(STRICT_MERKLE_DEPTH + 1);
-    let mut index_bits = Vec::with_capacity(STRICT_MERKLE_DEPTH);
+    let mut inputs = Vec::with_capacity(credential_depth + 1);
+    let mut index_bits = Vec::with_capacity(credential_depth);
     inputs.push(leaf_input);
 
     let mut idx = event_index;
@@ -2103,22 +2177,26 @@ fn c2_path_witness(
 }
 
 fn c2_trace(inputs: Vec<[F; POSEIDON_WIDTH]>, index_bits: &[F]) -> RowMajorMatrix<F> {
-    debug_assert_eq!(inputs.len(), STRICT_MERKLE_DEPTH + 1);
-    debug_assert_eq!(index_bits.len(), STRICT_MERKLE_DEPTH);
-    let poseidon = poseidon_trace(inputs);
-    debug_assert_eq!(poseidon.values.len(), POSEIDON_COLS * C2_VECTOR_LANES);
-    let mut values = Vec::with_capacity(C2_WIDTH * C2_VECTOR_LANES);
-    for row in 0..C2_VECTOR_LANES {
+    let credential_depth = index_bits.len();
+    debug_assert_eq!(inputs.len(), credential_depth + 1);
+    let rows = (inputs.len() + 1)
+        .next_power_of_two()
+        .max(MIN_FRI_TRACE_ROWS);
+    let mut padded = inputs;
+    padded.resize(rows, [F::ZERO; POSEIDON_WIDTH]);
+    let poseidon = poseidon_trace(padded);
+    let mut values = Vec::with_capacity(C2_WIDTH * rows);
+    for row in 0..rows {
         let start = row * POSEIDON_COLS;
         values.extend_from_slice(&poseidon.values[start..start + POSEIDON_COLS]);
-        let is_real = row <= STRICT_MERKLE_DEPTH;
+        let is_real = row <= credential_depth;
         values.push(if row == 0 || !is_real {
             F::ZERO
         } else {
             index_bits[row - 1]
         });
         values.push(F::from_bool(is_real));
-        values.push(f(row.min(STRICT_MERKLE_DEPTH) as u64));
+        values.push(f(row.min(credential_depth) as u64));
     }
     RowMajorMatrix::new(values, C2_WIDTH)
 }
@@ -2730,6 +2808,27 @@ mod tests {
     };
 
     #[test]
+    fn credential_depth_is_honored_and_invalid_depth_is_rejected() -> Result<()> {
+        let lot = synthetic_lot(2, 8, Profile::CoffeeSmall);
+        let shallow = build_template_with_depth(CircuitKind::C2, 8, Profile::CoffeeSmall, 6)?;
+        assert_eq!(shallow.credential_depth, 6);
+        let witness = c2_path_witness(&lot, 2, 8, None, 6)?;
+        assert_eq!(witness.index_bits.len(), 6);
+        assert_eq!(witness.inputs.len(), 7);
+        let (trace, pis) = c2_trace_and_pis_with_depth(&lot, 2, 8, None, 6)?;
+        assert_eq!(trace.values.len() / C2_WIDTH, 16);
+        assert_eq!(pis.len(), 1);
+        p3_air::check_constraints(&C2MerkleAir { depth: 6 }, &trace, &pis);
+        assert!(catch_unwind(AssertUnwindSafe(|| {
+            p3_air::check_constraints(&C2MerkleAir { depth: 16 }, &trace, &pis)
+        }))
+        .is_err());
+        assert!(build_template_with_depth(CircuitKind::C2, 8, Profile::CoffeeSmall, 7).is_err());
+        assert!(c2_path_witness(&lot, 2, 65, None, 6).is_err());
+        Ok(())
+    }
+
+    #[test]
     #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c3_valid_threshold_passes() -> Result<()> {
         let profile = Profile::CoffeeSmall;
@@ -2870,7 +2969,14 @@ mod tests {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(2, 8, profile);
         let (trace, pis) = c2_trace_and_pis(&lot, 2, 8, Some(PathTamper::WrongRoot))?;
-        assert!(prove_stark(&C2MerkleAir, trace, &pis).is_err());
+        assert!(prove_stark(
+            &C2MerkleAir {
+                depth: STRICT_MERKLE_DEPTH
+            },
+            trace,
+            &pis
+        )
+        .is_err());
         Ok(())
     }
 
@@ -2880,7 +2986,14 @@ mod tests {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(2, 8, profile);
         let (trace, pis) = c2_trace_and_pis(&lot, 2, 8, Some(PathTamper::WrongPath))?;
-        assert!(prove_stark(&C2MerkleAir, trace, &pis).is_err());
+        assert!(prove_stark(
+            &C2MerkleAir {
+                depth: STRICT_MERKLE_DEPTH
+            },
+            trace,
+            &pis
+        )
+        .is_err());
         Ok(())
     }
 
@@ -2890,7 +3003,14 @@ mod tests {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(1, 8, profile);
         let (trace, pis) = c2_trace_and_pis(&lot, 1, 8, Some(PathTamper::WrongIndex))?;
-        assert!(prove_stark(&C2MerkleAir, trace, &pis).is_err());
+        assert!(prove_stark(
+            &C2MerkleAir {
+                depth: STRICT_MERKLE_DEPTH
+            },
+            trace,
+            &pis
+        )
+        .is_err());
         Ok(())
     }
 
@@ -3090,7 +3210,9 @@ mod tests {
             events: 8,
             level: usize::MAX,
         };
-        let c2 = C2MerkleAir;
+        let c2 = C2MerkleAir {
+            depth: STRICT_MERKLE_DEPTH,
+        };
         let fixed_fri_limit = (1 << FRI_LOG_BLOWUP) + 1;
         assert!(
             get_max_constraint_degree::<F, _>(&serial, AirLayout::from_air(&serial))
@@ -3118,8 +3240,12 @@ mod tests {
 
     #[cfg(feature = "recursion")]
     #[test]
-    fn recursion_requires_eight_fri_queries() {
-        assert_eq!(recursion_config().fri_verifier_params.num_queries, 8);
+    fn recursion_enforces_production_fri_parameters() {
+        let params = recursion_config().fri_verifier_params;
+        assert_eq!(params.num_queries, 33);
+        assert_eq!(params.log_blowup, 3);
+        assert_eq!(params.query_pow_bits, 16);
+        assert!(params.permutation_config.is_some());
     }
 
     #[cfg(feature = "recursion")]

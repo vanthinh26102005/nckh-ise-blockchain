@@ -3,12 +3,15 @@
 import argparse
 import itertools
 import json
+import math
+import re
 import random
 import statistics
 from collections import defaultdict
 from pathlib import Path
 
-from e3_run import MODES
+from e3_run import MODES, mode_order
+from e4_preflight import validate_receipt, validate_receipt_chain
 
 
 def percentile(values, fraction):
@@ -67,6 +70,13 @@ def metrics(measured, mode):
     audit = measured.get("audit_samples", [])
     calldata = measured.get("calldata_samples", [])
     gas = measured.get("gas_samples", [])
+    if not isinstance(seconds, (int, float)) or not math.isfinite(seconds) or seconds < 3600:
+        raise ValueError("completed E3 elapsed time must cover 3600 paced seconds")
+    for values in (audit, calldata, gas):
+        if any(isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or value < 0 for value in values):
+            raise ValueError("E3 metrics must be finite nonnegative measurements")
+    if mode != "fabric-only" and (len(calldata) != len(measured.get("transactions", [])) or len(gas) != len(measured.get("transactions", []))):
+        raise ValueError("missing measured E3 gas/calldata samples")
     return {
         "throughput_lots_min": shipments * 60 / seconds,
         "throughput_events_s": measured["committed_events"] / seconds,
@@ -83,8 +93,41 @@ def analyze(records, allow_partial=False):
     commits = set()
     gates = set()
     provers = set()
+    registry_manifests = set()
+    historical = False
+    hardware = set()
+    isolation_namespaces=set()
+    isolation_paths=set()
     for record in records:
         mode, seed = record["mode"], record["seed"]
+        if record.get("protocolVersion") != 2:
+            if not allow_partial:
+                raise ValueError("formal E3 requires policy-v2 records; historical records remain pilot only")
+            historical = True
+        else:
+            if not re.fullmatch(r"[0-9a-f]{64}", record.get("registry_manifest_sha256", "")) or not record.get("acceptedPolicies"):
+                raise ValueError("E3 policy-v2 requires trusted registry manifest")
+            registry_manifests.add(record["registry_manifest_sha256"])
+            hardware.add(json.dumps(record.get("hardware"), sort_keys=True))
+            if any(not record.get("software", {}).get(key) for key in ("sp1_version", "fabric_images", "anvil_version")):
+                raise ValueError("E3 requires SP1/Fabric images/Anvil version provenance")
+            if record.get("mode_order") != list(mode_order(seed)) and record.get("mode_order") != mode_order(seed):
+                raise ValueError("E3 requires seeded counterbalanced mode order")
+            if record.get("mode_order_index") != mode_order(seed).index(mode):
+                raise ValueError("E3 mode order index disagrees with seeded schedule")
+            if any(not record.get("hardware", {}).get(key) for key in ("hostname", "cpu_model", "cpu_logical", "ram_bytes", "gpu_model_driver", "cuda_toolkit", "os")):
+                raise ValueError("E3 requires complete hardware metadata")
+            isolation=record.get("ledgerIsolation",{})
+            if (isolation.get("protocolVersion")!=2 or isolation.get("freshLedger") is not True
+                    or isolation.get("sourceRevision")!=record.get("git_commit") or isolation.get("seed")!=seed
+                    or isolation.get("mode")!=mode or isolation.get("computeHost")!=record["hardware"]["hostname"]
+                    or isolation.get("order")!=mode_order(seed).index(mode)
+                    or not isinstance(isolation.get("namespace"),str) or not isolation["namespace"]
+                    or not isinstance(isolation.get("runtimePath"),str) or not Path(isolation["runtimePath"]).is_absolute()):
+                raise ValueError("E3 requires fresh ledgerIsolation bound to source/mode/seed/host/order")
+            if isolation["namespace"] in isolation_namespaces or isolation["runtimePath"] in isolation_paths:
+                raise ValueError("E3 paired cells reused a ledger namespace or runtime path")
+            isolation_namespaces.add(isolation["namespace"]);isolation_paths.add(isolation["runtimePath"])
         if mode not in MODES or not isinstance(seed, int) or not 0 <= seed < 30:
             raise ValueError("unknown mode or seed outside 0..29")
         if seed in by_mode[mode]:
@@ -94,11 +137,30 @@ def analyze(records, allow_partial=False):
             raise ValueError("E3 workload does not match the fixed formal design")
         by_mode[mode][seed] = record
         measured = record["measurement"]
+        if measured.get("status") not in ("ok","censored","saturated"):
+            raise ValueError("unknown E3 measurement terminal status")
         statuses[measured["status"]] += 1
         commits.add(record["git_commit"])
         gates.add(record["gate_transaction_hash"])
         provers.add(record["prover"])
         if measured["status"] == "ok":
+            if not historical and (measured.get("protocolVersion") != 2 or not re.fullmatch(r"(?:0x)?[0-9a-f]{64}", measured.get("workload_digest", ""))):
+                raise ValueError("successful E3 needs policy-v2 actual workload digest")
+            if not historical:
+                if (not re.fullmatch(r"[0-9a-f]{40}",record.get("git_commit",""))
+                        or measured.get("sourceRevision")!=record["git_commit"]
+                        or measured.get("registryManifestSHA256")!=record.get("registry_manifest_sha256")):
+                    raise ValueError("E3 actual binary source/manifest provenance differs from run metadata")
+                trusted = record.get("trustedWorkload", {})
+                axes = {"seed":seed,"np":125,"shipment":64,"epoch_s":60,"epochs":60}
+                if (any(trusted.get(key)!=value for key,value in axes.items())
+                        or trusted.get("offeredEvents") != measured.get("offered_events")
+                        or trusted.get("offeredShipments") != measured.get("offered_shipments")
+                        or str(trusted.get("digest", "")).removeprefix("0x").lower() != str(measured.get("workload_digest", "")).removeprefix("0x").lower()):
+                    raise ValueError("E3 measured counts/digest differ from the prebuilt trusted workload")
+                metrics(measured,mode)
+            if not historical and mode in ("proposed", "vecro-adapted") and measured.get("verificationKind") != "sp1-groth16":
+                raise ValueError("E3 proof baseline must use real SP1 Groth16")
             if (measured.get("epochs_completed") != 60 or not measured.get("queue_drained")
                     or measured.get("committed_events") != measured.get("offered_events")
                     or measured.get("committed_shipments", 0) <= 0
@@ -117,23 +179,43 @@ def analyze(records, allow_partial=False):
                 raise ValueError("hash E3 needs one Anvil receipt per shipment")
             if mode == "vecro-adapted" and len(transactions) < measured["committed_shipments"]:
                 raise ValueError("adapted token E3 needs at least one mint per shipment")
-            if any(not tx.get("transactionHash") or not tx.get("gasUsed") for tx in transactions):
-                raise ValueError("E3 Anvil receipt is missing transaction hash or gas")
+            for tx in transactions:
+                if historical:
+                    if not tx.get("transactionHash") or not tx.get("gasUsed"):
+                        raise ValueError("E3 Anvil receipt is missing transaction hash or gas")
+                else:
+                    validate_receipt(tx, proof=mode in ("proposed", "vecro-adapted"))
+                    if mode in ("proposed", "vecro-adapted"):
+                        pair = {key: tx.get(key, "").lower() for key in ("certificateRoot", "polygonCommitment")}
+                        if pair not in record["acceptedPolicies"]:
+                            raise ValueError("E3 receipt policy pair outside trusted manifest")
+            if not historical and mode in ("proposed", "vecro-adapted"):
+                validate_receipt_chain(transactions)
     if len(commits) != 1:
         raise ValueError("E3 records have different Git commits")
     if len(gates) != 1 or len(provers) != 1:
         raise ValueError("E3 records used different gate receipts or provers")
+    if not historical and len(hardware) != 1:
+        raise ValueError("paired E3 modes must use the same hardware")
+    if not historical and len(registry_manifests) != 1:
+        raise ValueError("E3 records used different trusted policy manifests")
     for seed in range(30):
+        paired = [by_mode[mode][seed] for mode in MODES if seed in by_mode[mode]]
+        digests = {record["measurement"].get("workload_digest") for record in paired if record["measurement"].get("workload_digest")}
+        if not historical and len(digests) > 1:
+            raise ValueError(f"E3 seed {seed} actual workload digests differ across modes")
         offered = {by_mode[mode][seed]["measurement"]["offered_events"]
                    for mode in MODES if seed in by_mode[mode]}
         if len(offered) > 1:
             raise ValueError(f"E3 seed {seed} did not use the same offered workload across modes")
     full = all(set(by_mode[mode]) == set(range(30)) for mode in MODES)
-    successful = full and statuses == {"ok": 120}
+    successful = full and statuses == {"ok": 120} and not historical
     if not allow_partial and not successful:
         raise ValueError(f"formal E3 needs all 4 modes x 30 successful paired seeds; statuses={dict(statuses)}")
     summary = {"formal": successful, "runs": len(records), "statuses": dict(statuses),
-               "git_commit": next(iter(commits)), "modes": {}, "paired_tests": []}
+               "git_commit": next(iter(commits)), "protocolVersion": 2 if not historical else "historical",
+               "completion_rate": statuses.get("ok", 0) / len(records), "saturation_rate": statuses.get("saturated", 0) / len(records),
+               "units": {"throughput_lots_min": "shipments/min", "onchain_bytes_per_shipment": "bytes/shipment", "gas_per_shipment": "gas/shipment"}, "modes": {}, "paired_tests": []}
     for mode in MODES:
         valid = [metrics(by_mode[mode][seed]["measurement"], mode) for seed in sorted(by_mode[mode])
                  if by_mode[mode][seed]["measurement"]["status"] == "ok"]

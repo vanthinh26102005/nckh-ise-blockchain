@@ -16,6 +16,7 @@ fn parse_args() -> Result<BenchmarkOptions> {
     let mut jobs = 1usize;
     let mut include_placeholders = false;
     let mut strict_output = false;
+    let mut credential_depth = 16usize;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -37,6 +38,15 @@ fn parse_args() -> Result<BenchmarkOptions> {
                 profile = Profile::parse(&raw).ok_or_else(|| {
                     anyhow!("unknown profile '{raw}', expected coffee-small,coffee-default,stress")
                 })?;
+            }
+            "--credential-depth" => {
+                credential_depth = args
+                    .next()
+                    .context("--credential-depth requires 6 or 16")?
+                    .parse()?;
+                if ![6, 16].contains(&credential_depth) {
+                    bail!("--credential-depth must be 6 or 16");
+                }
             }
             "--jobs" => jobs = args.next().context("--jobs requires a number")?.parse()?,
             "--include-placeholders" => include_placeholders = true,
@@ -60,6 +70,7 @@ fn parse_args() -> Result<BenchmarkOptions> {
     };
 
     Ok(BenchmarkOptions {
+        credential_depth,
         out: out.unwrap_or_else(|| PathBuf::from("results/e1/raw.csv")),
         events_per_lot: events.unwrap_or_else(|| vec![8, 16, 32, 64]),
         seeds: seeds.unwrap_or(30),
@@ -99,6 +110,6 @@ fn parse_circuits(raw: &str) -> Result<Vec<CircuitKind>> {
 
 fn print_help() {
     println!(
-        "Usage: e1-bench --out results/e1/raw.csv --events 8,16,32,64 --seeds 30 --circuits all --profile coffee-default --jobs 1 [--include-placeholders] [--strict-output]"
+        "Usage: e1-bench --out results/e1/raw.csv --events 8,16,32,64 --seeds 30 --circuits all --profile coffee-default --jobs 1 [--credential-depth 6|16] [--include-placeholders] [--strict-output]"
     );
 }
