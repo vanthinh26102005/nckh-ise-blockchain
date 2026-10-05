@@ -515,6 +515,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC only: creates a real Groth16 proof"]
     fn cpu_groth16_proof_verifies_and_binds_public_values() {
         let input = valid_input();
         let expected = evaluate(&input).unwrap().abi_encode();

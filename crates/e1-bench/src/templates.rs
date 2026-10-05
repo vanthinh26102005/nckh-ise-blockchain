@@ -2730,6 +2730,7 @@ mod tests {
     };
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c3_valid_threshold_passes() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(3, 8, profile);
@@ -2766,6 +2767,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c3_padding_does_not_break_valid_trace() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(3, 9, profile);
@@ -2775,6 +2777,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c4_valid_actor_authorization_passes() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(4, 8, profile);
@@ -2800,6 +2803,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c4_wrong_secret_fails() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(4, 8, profile);
@@ -2813,6 +2817,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c4_wrong_role_fails() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(4, 8, profile);
@@ -2826,6 +2831,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c4_wrong_commitment_fails() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(4, 8, profile);
@@ -2839,6 +2845,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c2_valid_merkle_path_passes() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(2, 8, profile);
@@ -2848,6 +2855,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c2_odd_index_merkle_path_passes() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(1, 8, profile);
@@ -2857,6 +2865,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c2_wrong_root_fails() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(2, 8, profile);
@@ -2866,6 +2875,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c2_wrong_path_fails() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(2, 8, profile);
@@ -2875,6 +2885,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c2_wrong_index_fails() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(1, 8, profile);
@@ -2884,6 +2895,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c5_valid_nullifier_passes() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(5, 8, profile);
@@ -2893,6 +2905,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c5_nonempty_old_root_accepts_a_fresh_nullifier() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let prior_lot = synthetic_lot(6, 8, profile);
@@ -2903,6 +2916,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c5_existing_nullifier_cannot_be_inserted_again() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(5, 8, profile);
@@ -2912,11 +2926,13 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c5_duplicate_nullifier_fails() {
         assert!(invalid_c5_duplicate(8, Profile::CoffeeSmall).is_ok());
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c5_wrong_old_root_fails() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(5, 8, profile);
@@ -2926,6 +2942,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c5_wrong_new_root_index_and_state_fail() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(5, 8, profile);
@@ -2941,6 +2958,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c5_wrong_secret_fails() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(5, 8, profile);
@@ -2950,6 +2968,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c5_wrong_sparse_path_fails() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(5, 8, profile);
@@ -2989,6 +3008,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c1_valid_outside_polygon_passes() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(6, 8, profile);
@@ -2998,6 +3018,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c1_inside_polygon_and_boundary_fail() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let inside = crate::synthetic::inside_forbidden_lot(6, 8, profile);
@@ -3014,6 +3035,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c1_concave_polygon_respects_the_notch() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let template = build_template(CircuitKind::C1, 8, profile)?;
@@ -3040,6 +3062,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn c1_wrong_public_commitment_fails() -> Result<()> {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(6, 8, profile);
@@ -3101,6 +3124,7 @@ mod tests {
 
     #[cfg(feature = "recursion")]
     #[test]
+    #[ignore = "HPC proof generation; run explicitly with --ignored"]
     fn wrapper_recursive_plonky3_proves_and_verifies() {
         let profile = Profile::CoffeeSmall;
         let lot = synthetic_lot(1, 8, profile);
