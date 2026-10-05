@@ -7,3 +7,5 @@ publish = false
 [dependencies]
 ed25519-dalek.workspace = true
 sha2.workspace = true
+
+hmac = { version = "0.12.1", default-features = false }
