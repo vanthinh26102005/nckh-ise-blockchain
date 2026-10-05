@@ -1,7 +1,15 @@
 # Tiến độ hiện tại và các thay đổi so với draft paper
 
-**Ngày cập nhật:** 04/10/2026
+**Ngày cập nhật:** 05/10/2026
 **Dành cho:** rà soát hướng nghiên cứu với giảng viên
+
+## Implementation v2 và nghiệm thu local ngày 05/10
+
+B1–B3 đã được sửa trong code: registry chung ràng buộc cặp roots, credential bind lot/owner/nullifier key, sparse nullifier 256 bit, salted polygon/event Merkle commitments, và aggregate ABI 352 byte với child kind tường minh. Có mapper ObjectEvent, CLI disclosure, công cụ gas/USD và job dry-run. Luồng mapper → ký canonical bytes → witness → guest execute tám event đã chạy lại với public values khớp host trong 3,17 giây, RSS khoảng 74 MiB; không tạo proof. Verifier stub chỉ kiểm tra contract logic.
+
+Runner/analyzer kiểm tra provenance, coverage, queue/deadline, workload paired và registry configuration; bộ test nhẹ đang được nghiệm thu cuối. **Chưa có proof/receipt mới cho v2, gate HPC, preflight CPU/GPU hay benchmark formal.** Các kết quả E1/E2 cũ là evidence lịch sử trước sửa; chưa dùng để đóng checklist v2. Plot/multi-polygon và physical lot continuity giữ future work; ORCID/funding còn chờ tác giả.
+
+Xem [sổ evidence v2](policy_v2_hpc_readiness.md), [runbook](../POLICY_V2_RUNBOOK.md) và [checklist máy đọc được](../../results/policy-v2/checklist.json). Phần bên dưới giữ báo cáo lịch sử để đối chiếu.
 
 ## Tóm tắt
 
