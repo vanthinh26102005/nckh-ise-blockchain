@@ -1,6 +1,6 @@
 # E1 local CPU results — 29 September 2026
 
-The current Plonky3 base benchmark completed all **600/600** C1–C5 prove-and-verify measurements on a local CPU. On 6 October 2026, the original raw CSV passed an independent coverage and table check. Reviewer access to the off-Git evidence bundle is tracked in [the review](review.md). This is a local result; the university Slurm CPU run is separate and has not completed.
+The current Plonky3 base benchmark completed all **600/600** C1–C5 prove-and-verify measurements on a local CPU. On 6 October 2026, the original raw CSV passed an independent coverage and table check. The [off-Git evidence folder](https://drive.google.com/drive/folders/1fj6IRxBNfxBgtVineqXHoWaR2CKlU21a?usp=sharing) contains the extracted files; reviewer access and checksum verification are tracked in [the review](review.md). This is a local result; the university Slurm CPU run is separate and has not completed.
 
 ## Run configuration and provenance
 
@@ -10,7 +10,7 @@ The current Plonky3 base benchmark completed all **600/600** C1–C5 prove-and-v
 - Recorded source [commit `9611f581dfc0d6be959df84db1155fce2ff9f2e6`](https://github.com/vanthinh26102005/nckh-ise-blockchain/commit/9611f581dfc0d6be959df84db1155fce2ff9f2e6), now reachable through [the provenance ref](https://github.com/vanthinh26102005/nckh-ise-blockchain/tree/codex/e1-source-20260929). The run saved a 54-file source subset and working-tree diff outside Git. Applying the diff to the recorded commit reproduces the modified runner and analyzer in the snapshot; the launcher and analyzer test are included as untracked source. The changes affect the benchmark launcher, analyzer, and Linux memory reporting. C1–C5 proving logic on macOS was unchanged.
 - Build: `cargo build --locked --release -p e1-bench`. One warm-up seed for each size ran in a separate process and was excluded from the measured CSV.
 - Timed values exclude reusable template setup and witness generation. The proof size is the serialized Plonky3 STARK proof.
-- Raw CSV SHA-256: `7d38725aa46358e49e69deb216616e68bc923a947aa5ae27f7b3e9f048ebe6f7`. Cargo.lock SHA-256: `09a4b0bc93cb4988a224a5fc6435e80b043865eef4321489bd8c12fd6390c447`. The original raw CSV, logs, and full environment metadata remain in `Paper/benchmark-runs/e1-local-20260929T154615Z-9MbzHC/` outside Git. A reviewer ZIP with these files, source snapshot/diff, `README.md`, and per-file `SHA256SUMS` has SHA-256 `1098672d6caf05c758b6a8464cd8d48a867ab561472d9f4ac2740705229578f0`.
+- Raw CSV SHA-256: `7d38725aa46358e49e69deb216616e68bc923a947aa5ae27f7b3e9f048ebe6f7`. Cargo.lock SHA-256: `09a4b0bc93cb4988a224a5fc6435e80b043865eef4321489bd8c12fd6390c447`. The original raw CSV, logs, and full environment metadata remain in `Paper/benchmark-runs/e1-local-20260929T154615Z-9MbzHC/` outside Git. The [Drive folder](https://drive.google.com/drive/folders/1fj6IRxBNfxBgtVineqXHoWaR2CKlU21a?usp=sharing) contains extracted evidence files and per-file `SHA256SUMS`. A separate local reviewer ZIP has SHA-256 `1098672d6caf05c758b6a8464cd8d48a867ab561472d9f4ac2740705229578f0`; this ZIP checksum does not identify a file in the Drive folder.
 
 ## Results
 

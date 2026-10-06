@@ -42,7 +42,7 @@ Việc dùng SP1 không thay đổi bài toán hay policy. Nó thay thế hướ
 
 ### P2–P4 — Implementation thí nghiệm đã mở rộng, benchmark chính thức còn chờ
 
-1. **E1:** PR #32 đã báo cáo full grid base CPU local, 600 phép đo C1–C5 với 30 seed/lot size. Follow-up #36 đã tái kiểm tra raw/source cục bộ và tạo summary/CI/figure; còn upload bundle để reviewer xác thực độc lập. CPU Slurm, recursion và SP1 không được suy diễn từ report này.
+1. **E1:** PR #32 đã báo cáo full grid base CPU local, 600 phép đo C1–C5 với 30 seed/lot size. Follow-up #36 đã tái kiểm tra raw/source cục bộ và tạo summary/CI/figure; [folder evidence trên Drive](https://drive.google.com/drive/folders/1fj6IRxBNfxBgtVineqXHoWaR2CKlU21a?usp=sharing) đã có, còn chờ reviewer xác nhận truy cập và kiểm tra độc lập. CPU Slurm, recursion và SP1 không được suy diễn từ report này.
 2. **E2:** real runner/analyzer và topology ba Raft orderer đã có; còn chạy workload đầy đủ, prove lại từng lot, đo Fabric acknowledgement đến Anvil receipt.
 3. **E3:** đã có recursive SP1 epoch gate, Fabric-only/hash-on-chain/VeCroToken-adapted/proposed runner và analyzer. Còn gate receipt và bộ 4 mode × 30 paired seed để so sánh có thống kê; bản adapted không phải reproduction đầy đủ VeCroToken gốc.
 4. **E4:** đã có real executor, CPU/GPU preflight, grid 80 screening + 270 confirmation run, shard merge và analyzer. Còn chạy các phase, xác thực metadata/receipt và xuất kết quả scalability/trade-off.
