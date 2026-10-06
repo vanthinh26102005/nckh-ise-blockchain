@@ -4,6 +4,7 @@
 
 | Bộ dữ liệu | Phạm vi | Trạng thái |
 |---|---|---|
+| [Policy-v2 local CPU smoke 06/10/2026](local-cpu-2026-10-06-policy-v2/report.md) | Plonky3 C1–C5 at n=8, one seed, depth 16; SP1 guest execute only | Base 5/5 passed; wrapper incomplete-resource; no real SP1 proof |
 | [Local CPU 29/09/2026](local-cpu-2026-09-29/report.md) | Plonky3 base C1–C5, 4 lot size × 30 seed; tác giả báo cáo 600/600 phép đo | Full grid base được báo cáo trong PR #32; chưa tái tính từ raw CSV |
 | `quick/`, `strict/`, `full/` | Output do Make targets tạo | Tên thư mục/target không chứng minh một run đã hoàn thành |
 | `archive/` | Artifact lịch sử | Không dùng làm kết quả hiện tại |
