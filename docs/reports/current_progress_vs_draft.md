@@ -13,11 +13,11 @@ Xem [sổ evidence v2](policy_v2_hpc_readiness.md), [runbook](../POLICY_V2_RUNBO
 
 ## Tóm tắt
 
-Nhóm đã có đường kiểm chứng thật **Fabric → ZK proof → Solidity verifier trên Anvil** cho policy C1–C5 từ smoke E2 trước đó. Repo hiện đã bổ sung **E3 recursive epoch guest/anchor, runner so sánh bốn baseline và E4 sweep runner/preflight/analyzer**, cùng topology benchmark ba Raft orderer. E3/E4 đã qua giai đoạn chỉ có ý tưởng, nhưng checkout hiện chưa có gate receipt, CPU/GPU preflight hoặc bộ benchmark chính thức để trả lời RQ3/RQ4 bằng số đo. PR #32 đã cung cấp báo cáo full grid base E1 local CPU (600 phép đo được báo cáo), nhưng raw/source provenance còn chờ reviewer xác thực. E2 full còn thiếu kết quả; chưa gọi toàn bộ paper là hoàn thành.
+Nhóm đã có đường kiểm chứng thật **Fabric → ZK proof → Solidity verifier trên Anvil** cho policy C1–C5 từ smoke E2 trước đó. Repo hiện đã bổ sung **E3 recursive epoch guest/anchor, runner so sánh bốn baseline và E4 sweep runner/preflight/analyzer**, cùng topology benchmark ba Raft orderer. E3/E4 đã qua giai đoạn chỉ có ý tưởng, nhưng checkout hiện chưa có gate receipt, CPU/GPU preflight hoặc bộ benchmark chính thức để trả lời RQ3/RQ4 bằng số đo. Full grid base E1 local CPU đã được tái kiểm tra từ raw (600 phép đo, 20 ô); [folder evidence trên Drive](https://drive.google.com/drive/folders/1fj6IRxBNfxBgtVineqXHoWaR2CKlU21a?usp=sharing) đã có, chờ reviewer xác nhận truy cập và kiểm tra độc lập. E2 full còn thiếu kết quả; chưa gọi toàn bộ paper là hoàn thành.
 
 Bản cập nhật đối chiếu source tới commit `14a7bab` (25/09/2026). Evidence smoke ngày 11/09/2026 được giữ với phạm vi lịch sử; kiểm tra Python/plan mới được chạy ngày 04/10/2026. Báo cáo chi tiết: [E1](e1_teacher_report.md), [E2](e2_teacher_report.md), [E3](e3_teacher_report.md), [E4](e4_teacher_report.md).
 
-Review bổ sung PR #32 ở head `c0e5dfa`: đã nhập report local ngày 29/09 nguyên văn, kiểm tra bảng/lockfile và ghi [giới hạn xác thực E1](../../results/e1/local-cpu-2026-09-29/review.md). PR chưa được merge trong lần cập nhật này; kết quả local không thay thế CPU Slurm issue #25.
+Review bổ sung PR #32 ở head `c0e5dfa` ban đầu chỉ kiểm tra bảng/lockfile. Follow-up ngày 06/10 đã tái tính từ raw, sửa mười proof-size median `.5`, và ghi [giới hạn xác thực E1](../../results/e1/local-cpu-2026-09-29/review.md). PR #35 đã merge; phần evidence tiếp theo cần PR liên kết #35/#36. Kết quả local không thay thế CPU Slurm issue #25.
 
 **Bổ sung sau khi đọc paper thầy gửi ngày 04/10:** bản LNCS mới trong `EPCIS_ACIIDS_2026_ThinhTriNhan/` đã mô tả Path A/SP1 và Path B/Plonky3, ghi nhận smoke E2 và đưa checklist 20 task. Đối chiếu source xác nhận còn ba yêu cầu trước benchmark chính thức: registry binding B1, key-bound nullifier/index rộng B2 và hiding commitments B3. E1 còn cần cấu hình FRI mới và benchmark wrapper/SP1; báo cáo 600 phép đo base local chưa đóng các yêu cầu này. Xem [review paper mới](revised_paper_resource_review.md) để biết toàn bộ task, số liệu còn thiếu và các điểm cần đồng bộ A100/H200, ABI, metadata và protocol.
 
@@ -27,7 +27,7 @@ Review bổ sung PR #32 ở head `c0e5dfa`: đã nhập report local ngày 29/09
 | ---------------- | --------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
 | EPCIS            | Dữ liệu truy xuất nguồn gốc              | `EpcisEventV1` canonical 86-byte, dùng xuyên Fabric/prover/test                  | Tránh mỗi layer hash/parse khác nhau                                                          |
 | C1–C5           | Policy tuân thủ trong ZK                    | C1 geofence, C2 registry, C3 threshold/time, C4 authorization, C5 nullifier đã có | C4 cần phân biệt baseline Poseidon2 với Ed25519 trong SP1 guest                              |
-| E1 / RQ1 | 4 lot size × 30 seed, chi phí mật mã | PR #32 báo cáo 600/600 base C1–C5 trên local CPU; bảng đã nhập | Chờ raw/source evidence và tái tính thống kê; không gồm recursion/SP1/Slurm |
+| E1 / RQ1 | 4 lot size × 30 seed, chi phí mật mã | Raw local xác nhận 600/600 base C1–C5; 20 ô và thống kê đã tái kiểm tra | [Folder Drive](https://drive.google.com/drive/folders/1fj6IRxBNfxBgtVineqXHoWaR2CKlU21a?usp=sharing) đã có; chờ reviewer xác nhận truy cập; không gồm recursion/SP1/Slurm |
 | Recursion        | Plonky3 recursive rollup                      | Plonky3 wrapper Rust cho E1; SP1 epoch guest kiểm chứng và tổng hợp child proofs cho E3 | Hai đường proof khác nhau; gate SP1 vẫn cần receipt của lần chạy thật |
 | EVM verification | Draft hướng đến public-chain verification | SP1 Groth16 proof được Solidity verifier kiểm tra và anchor trên Anvil         | EVM verify là thật, nhưng proof system là SP1 deployment path thay vì port Plonky3 verifier |
 | Fabric           | Fabric làm private data layer                | Smoke lịch sử có 2 org/2 peer/1 orderer; topology benchmark trong code có 3 Raft orderer | Có cấu hình topology mới chưa đồng nghĩa đã đo benchmark trên topology đó |
@@ -84,7 +84,7 @@ Các mốc E3/E4 xác nhận code đã có trong revision đang rà soát; khôn
 
 | Experiment | Implementation               | Evidence hiện có                           | Việc còn lại                                            |
 | ---------- | ---------------------------- | -------------------------------------------- | ---------------------------------------------------------- |
-| E1 / RQ1   | Có C1–C5 và hai proof paths | Unit/integration/recursion lịch sử; report local 20 ô × 30 seed trong PR #32 | Xác thực raw và source snapshot/diff; tái tạo thống kê/CI/figure; CPU Slurm riêng |
+| E1 / RQ1   | Có C1–C5 và hai proof paths | Unit/integration/recursion lịch sử; raw local 20 ô × 30 seed, summary/CI/figure và source snapshot/diff đã tự kiểm tra | Reviewer xác nhận truy cập folder Drive và xác thực độc lập; CPU Slurm riêng |
 | E2 / RQ2   | Có smoke và real runner/analyzer | Smoke CPU lịch sử 8 event, valid/tamper/duplicate checks | Preflight GPU và 60 phút × 30 seed trên topology 3 Raft; không timing cache |
 | E3 / RQ3   | Có recursive gate, 4 mode thật và analyzer | 5 test Python pass; source guest/anchor; chưa có gate receipt/formal results trong checkout | Gate thật rồi 120 paired run, run order, thống kê và giới hạn baseline adapted |
 | E4 / RQ4   | Có real executor, preflight, merge và analyzer | 17 test Python pass; plan khớp 80 + 270 run; chưa có sweep measurement trong checkout | Preflight A/B, chạy đủ phase trên cùng compute host, bảng/figure trade-off |
@@ -109,7 +109,7 @@ Trước các bước benchmark bên dưới, hoàn thiện và kiểm thử B1�
 | `python3 scripts/test_e3.py` | 5/5 test pass | Thống kê, paired coverage và synthetic matrix |
 | `python3 scripts/test_e4.py` | 17/17 test pass | Plan, wrapper, shard merge và analyzer validation |
 | Đối chiếu `results/e4/plan.csv` với `e4_plan.py` | Khớp 350 run; 4 epoch/run | Kiểm tra cấu hình deterministic, không chạy sweep |
-| Review PR #32 | Đủ 20 ô; median/IQR hợp lệ; Cargo.lock hash khớp | Không có raw để kiểm tra 600 record hoặc tái tính; source commit không resolve trên remote |
+| Review PR #32 và follow-up #36 | Raw đủ 600 record/20 ô, seed 1–30; 20 dòng median/IQR khớp sau correction `.5`; summary tái tạo byte-for-byte | Source commit đã publish, diff khớp snapshot; folder Drive đã có, chờ reviewer xác nhận quyền truy cập và checksum |
 
 Không chạy lại proof gate, Anvil integration hay benchmark CUDA trong lần sửa docs này. Checkout chưa có `results/e3/gate_manifest.json`, E3 comparison, E4 preflight hoặc phase results để kiểm chứng kết quả chính thức.
 
