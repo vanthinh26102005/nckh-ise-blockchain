@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {ISP1Verifier} from "./sp1/ISP1Verifier.sol";
+import {PolicyRegistry} from "./PolicyRegistry.sol";
 
 /// @notice E3 adapted token baseline. Uses this artifact's SP1 policy proof;
 ///         it does not reproduce VeCroToken's original cross-chain protocol.
@@ -20,6 +21,11 @@ contract VeCroTokenAdaptedAnchor {
         bool valid;
     }
 
+    error InvalidPublicValuesLength(uint256 received);
+    error PolicyRootsNotAllowed(bytes32 certificateRoot, bytes32 polygonCommitment);
+    error StateRootNotAdvanced();
+
+    PolicyRegistry public immutable policyRegistry;
     ISP1Verifier public immutable verifier;
     bytes32 public immutable policyProgramVKey;
     bytes32 public nullifierRoot;
@@ -31,21 +37,28 @@ contract VeCroTokenAdaptedAnchor {
 
     event TokenMinted(bytes32 indexed tokenId, uint64 indexed epochId, bytes32 eventBatchDigest, uint8 eventCount);
 
-    constructor(address verifier_, bytes32 policyProgramVKey_, bytes32 initialRoot_) {
+    constructor(address verifier_, bytes32 policyProgramVKey_, bytes32 initialRoot_, address policyRegistry_) {
+        policyRegistry = PolicyRegistry(policyRegistry_);
         verifier = ISP1Verifier(verifier_);
         policyProgramVKey = policyProgramVKey_;
         nullifierRoot = initialRoot_;
     }
 
     function verifyAndMint(bytes calldata publicValues, bytes calldata proof) external {
+        if (publicValues.length != 352) revert InvalidPublicValuesLength(publicValues.length);
         verifier.verifyProof(policyProgramVKey, publicValues, proof);
         PolicyPublicValues memory values = abi.decode(publicValues, (PolicyPublicValues));
-        if (!values.valid || values.eventCount < 8 || values.eventCount > 64) revert InvalidPolicyResult();
+        if (!values.valid || values.role != 4 || values.threshold != 900 ||
+            values.eventCount < 8 || values.eventCount > 64) revert InvalidPolicyResult();
+        bytes32 tokenId = keccak256(abi.encode(values.epochId, values.eventBatchDigest));
+        if (mintedTokens[tokenId]) revert DuplicateToken(tokenId);
+        if (!policyRegistry.allowedPolicies(values.certificateRoot, values.polygonCommitment)) {
+            revert PolicyRootsNotAllowed(values.certificateRoot, values.polygonCommitment);
+        }
+        if (values.newNullifierRoot == values.oldNullifierRoot) revert StateRootNotAdvanced();
         if (values.oldNullifierRoot != nullifierRoot) {
             revert StateRootMismatch(nullifierRoot, values.oldNullifierRoot);
         }
-        bytes32 tokenId = keccak256(abi.encode(values.epochId, values.eventBatchDigest));
-        if (mintedTokens[tokenId]) revert DuplicateToken(tokenId);
         mintedTokens[tokenId] = true;
         nullifierRoot = values.newNullifierRoot;
         emit TokenMinted(tokenId, values.epochId, values.eventBatchDigest, values.eventCount);

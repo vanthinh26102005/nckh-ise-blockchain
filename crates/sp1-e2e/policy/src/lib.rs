@@ -1,20 +1,22 @@
 use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
+use hmac::{Hmac, Mac};
 use std::collections::HashMap;
 
 pub mod epoch;
+pub mod registry;
 
 pub const EPCIS_EVENT_BYTES: usize = 86;
 pub const ED25519_SIGNATURE_BYTES: usize = 64;
 pub const MAX_POLYGON_VERTICES: usize = 32;
 pub const MIN_EVENTS: usize = 8;
 pub const MAX_EVENTS: usize = 64;
-pub const CERTIFICATE_TREE_DEPTH: usize = 6;
-pub const NULLIFIER_TREE_DEPTH: usize = 32;
+pub const CERTIFICATE_TREE_DEPTH: usize = 16;
+pub const NULLIFIER_TREE_DEPTH: usize = 256;
 pub const REQUIRED_ROLE: u8 = 4;
 pub const MAX_ALLOWED_READING: u32 = 900;
 
-const INPUT_VERSION: u8 = 1;
+pub const INPUT_VERSION: u8 = 2;
 const EVENT_VERSION: u8 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -117,21 +119,30 @@ pub fn decode_event(bytes: &[u8; EPCIS_EVENT_BYTES]) -> Result<EpcisEventV1, Pol
 pub struct EventWitness {
     pub event_bytes: [u8; EPCIS_EVENT_BYTES],
     pub signature: [u8; ED25519_SIGNATURE_BYTES],
+    pub credential_index: u16,
     pub certificate_path: [[u8; 32]; CERTIFICATE_TREE_DEPTH],
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct PolicyInput {
     pub epoch_id: u64,
     pub lot_id: u64,
     pub polygon: Vec<PointE6>,
     pub certificate_root: [u8; 32],
     pub old_nullifier_root: [u8; 32],
-    pub nullifier_secret: [u8; 32],
+    pub nullifier_key: [u8; 32],
+    pub owner_identity: [u8; 32],
+    pub polygon_nonce: [u8; 32],
+    pub batch_nonce: [u8; 32],
     pub nullifier_path: [[u8; 32]; NULLIFIER_TREE_DEPTH],
     pub events: Vec<EventWitness>,
 }
 
+impl std::fmt::Debug for PolicyInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PolicyInput").field("epoch_id",&self.epoch_id).field("lot_id",&self.lot_id).field("event_count",&self.events.len()).finish_non_exhaustive()
+    }
+}
 impl PolicyInput {
     pub fn encode(&self) -> Result<Vec<u8>, PolicyError> {
         validate_polygon(&self.polygon)?;
@@ -152,7 +163,10 @@ impl PolicyInput {
         }
         bytes.extend_from_slice(&self.certificate_root);
         bytes.extend_from_slice(&self.old_nullifier_root);
-        bytes.extend_from_slice(&self.nullifier_secret);
+        bytes.extend_from_slice(&self.nullifier_key);
+        bytes.extend_from_slice(&self.owner_identity);
+        bytes.extend_from_slice(&self.polygon_nonce);
+        bytes.extend_from_slice(&self.batch_nonce);
         for sibling in &self.nullifier_path {
             bytes.extend_from_slice(sibling);
         }
@@ -160,6 +174,7 @@ impl PolicyInput {
         for witness in &self.events {
             bytes.extend_from_slice(&witness.event_bytes);
             bytes.extend_from_slice(&witness.signature);
+            bytes.extend_from_slice(&witness.credential_index.to_be_bytes());
             for sibling in &witness.certificate_path {
                 bytes.extend_from_slice(sibling);
             }
@@ -188,7 +203,10 @@ impl PolicyInput {
         validate_polygon(&polygon)?;
         let certificate_root = reader.array::<32>()?;
         let old_nullifier_root = reader.array::<32>()?;
-        let nullifier_secret = reader.array::<32>()?;
+        let nullifier_key = reader.array::<32>()?;
+        let owner_identity = reader.array::<32>()?;
+        let polygon_nonce = reader.array::<32>()?;
+        let batch_nonce = reader.array::<32>()?;
         let mut nullifier_path = [[0_u8; 32]; NULLIFIER_TREE_DEPTH];
         for sibling in &mut nullifier_path {
             *sibling = reader.array()?;
@@ -201,6 +219,7 @@ impl PolicyInput {
         for _ in 0..event_count {
             let event_bytes = reader.array()?;
             let signature = reader.array()?;
+            let credential_index = u16::from_be_bytes(reader.array()?);
             let mut certificate_path = [[0_u8; 32]; CERTIFICATE_TREE_DEPTH];
             for sibling in &mut certificate_path {
                 *sibling = reader.array()?;
@@ -208,6 +227,7 @@ impl PolicyInput {
             events.push(EventWitness {
                 event_bytes,
                 signature,
+                credential_index,
                 certificate_path,
             });
         }
@@ -220,7 +240,10 @@ impl PolicyInput {
             polygon,
             certificate_root,
             old_nullifier_root,
-            nullifier_secret,
+            nullifier_key,
+            owner_identity,
+            polygon_nonce,
+            batch_nonce,
             nullifier_path,
             events,
         })
@@ -243,6 +266,18 @@ pub struct PolicyPublicValues {
 }
 
 impl PolicyPublicValues {
+    pub fn abi_decode(bytes:&[u8]) -> Result<Self,PolicyError> {
+        if bytes.len()!=352 {return Err(PolicyError::InvalidInput);}
+        let word=|i|crate::epoch::word_u64(bytes,i).map_err(|_|PolicyError::InvalidInput);
+        let role=u8::try_from(word(7)?).map_err(|_|PolicyError::InvalidInput)?;
+        let threshold=u32::try_from(word(8)?).map_err(|_|PolicyError::InvalidInput)?;
+        let event_count=u8::try_from(word(9)?).map_err(|_|PolicyError::InvalidInput)?;
+        let valid=word(10)?;if valid>1 {return Err(PolicyError::InvalidInput);}
+        Ok(Self {epoch_id:word(0)?,old_nullifier_root:bytes[32..64].try_into().unwrap(),new_nullifier_root:bytes[64..96].try_into().unwrap(),
+            event_batch_digest:bytes[96..128].try_into().unwrap(),certificate_root:bytes[128..160].try_into().unwrap(),polygon_commitment:bytes[160..192].try_into().unwrap(),
+            nullifier:bytes[192..224].try_into().unwrap(),role,threshold,event_count,valid:valid==1})
+    }
+
     /// Solidity ABI encoding for `(uint64,bytes32,bytes32,bytes32,bytes32,bytes32,bytes32,uint8,uint32,uint8,bool)`.
     pub fn abi_encode(self) -> [u8; 352] {
         let mut output = [0_u8; 352];
@@ -268,11 +303,8 @@ pub fn evaluate(input: &PolicyInput) -> Result<PolicyPublicValues, PolicyError> 
     }
 
     let mut previous_timestamp = None;
-    let mut batch = Sha256::new();
-    batch.update(b"EUDR:E2E:EVENT-BATCH:V1");
-    batch.update([input.events.len() as u8]);
 
-    for (index, witness) in input.events.iter().enumerate() {
+    for witness in &input.events {
         let event = decode_event(&witness.event_bytes)?;
         if event.lot_id != input.lot_id
             || event.epoch_id != input.epoch_id
@@ -292,14 +324,13 @@ pub fn evaluate(input: &PolicyInput) -> Result<PolicyPublicValues, PolicyError> 
         public_key
             .verify_strict(&witness.event_bytes, &signature)
             .map_err(|_| PolicyError::C4SignatureOrRole)?;
-        if credential_root(index, &event, &witness.certificate_path) != input.certificate_root {
+        if credential_root(witness.credential_index as usize, &event, input.owner_identity, nullifier_key_commitment(input.nullifier_key), &witness.certificate_path) != input.certificate_root {
             return Err(PolicyError::C2CredentialRoot);
         }
-        batch.update(witness.event_bytes);
     }
 
-    let nullifier = nullifier_hash(input.lot_id, input.nullifier_secret);
-    let index = nullifier_index(input.lot_id, input.nullifier_secret);
+    let nullifier = nullifier_hash(input.lot_id, input.nullifier_key);
+    let index = nullifier_index(input.lot_id, input.nullifier_key);
     let old_root = sparse_root(index, empty_leaf(), &input.nullifier_path);
     if old_root != input.old_nullifier_root {
         return Err(PolicyError::C5Nullifier);
@@ -310,9 +341,9 @@ pub fn evaluate(input: &PolicyInput) -> Result<PolicyPublicValues, PolicyError> 
         epoch_id: input.epoch_id,
         old_nullifier_root: input.old_nullifier_root,
         new_nullifier_root: new_root,
-        event_batch_digest: batch.finalize().into(),
+        event_batch_digest: event_batch_commitment(&input.events, input.batch_nonce),
         certificate_root: input.certificate_root,
-        polygon_commitment: polygon_commitment(&input.polygon),
+        polygon_commitment: polygon_commitment(&input.polygon, input.polygon_nonce),
         nullifier,
         role: REQUIRED_ROLE,
         threshold: MAX_ALLOWED_READING,
@@ -321,9 +352,10 @@ pub fn evaluate(input: &PolicyInput) -> Result<PolicyPublicValues, PolicyError> 
     })
 }
 
-pub fn polygon_commitment(polygon: &[PointE6]) -> [u8; 32] {
+pub fn polygon_commitment(polygon: &[PointE6], nonce: [u8; 32]) -> [u8; 32] {
     let mut hasher = Sha256::new();
-    hasher.update(b"EUDR:E2E:C1:POLYGON:V1");
+    hasher.update(b"EUDR:E2E:C1:POLYGON:V2");
+    hasher.update(nonce);
     hasher.update([polygon.len() as u8]);
     for point in polygon {
         hasher.update(point.latitude_e6.to_be_bytes());
@@ -332,9 +364,12 @@ pub fn polygon_commitment(polygon: &[PointE6]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-pub fn certificate_leaf(index: usize, event: &EpcisEventV1) -> [u8; 32] {
+pub fn certificate_leaf(index: usize, event: &EpcisEventV1, owner: [u8; 32], key_commitment: [u8; 32]) -> [u8; 32] {
     hash_parts(&[
-        b"EUDR:E2E:C2:CREDENTIAL:V1",
+        b"EUDR:E2E:C2:CREDENTIAL:V2",
+        &event.lot_id.to_be_bytes(),
+        &owner,
+        &key_commitment,
         &(index as u64).to_be_bytes(),
         &event.certificate_id.to_be_bytes(),
         &event.actor_public_key,
@@ -343,11 +378,11 @@ pub fn certificate_leaf(index: usize, event: &EpcisEventV1) -> [u8; 32] {
 }
 
 pub fn certificate_parent(left: [u8; 32], right: [u8; 32]) -> [u8; 32] {
-    hash_parts(&[b"EUDR:E2E:C2:NODE:V1", &left, &right])
+    hash_parts(&[b"EUDR:E2E:C2:NODE:V2", &left, &right])
 }
 
 pub fn certificate_padding_leaf(index: usize) -> [u8; 32] {
-    hash_parts(&[b"EUDR:E2E:C2:PADDING:V1", &(index as u64).to_be_bytes()])
+    hash_parts(&[b"EUDR:E2E:C2:PADDING:V2", &(index as u64).to_be_bytes()])
 }
 
 pub fn nullifier_default_root() -> [u8; 32] {
@@ -368,69 +403,50 @@ pub fn nullifier_default_path() -> [[u8; 32]; NULLIFIER_TREE_DEPTH] {
     path
 }
 
-pub fn nullifier_index(lot_id: u64, nullifier_secret: [u8; 32]) -> u32 {
-    u32::from_be_bytes(
-        nullifier_hash(lot_id, nullifier_secret)[..4]
-            .try_into()
-            .expect("fixed digest width"),
-    )
+pub fn nullifier_index(lot_id: u64, nullifier_key: [u8; 32]) -> [u8; 32] {
+    nullifier_hash(lot_id, nullifier_key)
 }
 
-/// Host-side sparse tree used to construct the next private C5 witness without materialising
-/// the 2^32 leaf map.
-#[derive(Clone, Debug, Default)]
+/// Full digest index. Walk least significant bit first, digest in big-endian order.
+#[derive(Clone, Debug)]
 pub struct SparseNullifierMap {
-    nodes: HashMap<(usize, u32), [u8; 32]>,
+    nodes: HashMap<(usize, [u8; 32]), [u8; 32]>,
+    defaults: [[u8; 32]; NULLIFIER_TREE_DEPTH + 1],
 }
-
+impl Default for SparseNullifierMap {
+    fn default() -> Self { Self { nodes: HashMap::new(), defaults: nullifier_empty_hashes() } }
+}
 impl SparseNullifierMap {
-    pub fn root(&self) -> [u8; 32] {
-        self.value(NULLIFIER_TREE_DEPTH, 0)
-    }
-
-    pub fn empty_path(&self, index: u32) -> Result<[[u8; 32]; NULLIFIER_TREE_DEPTH], PolicyError> {
-        if self.value(0, index) != empty_leaf() {
-            return Err(PolicyError::C5Nullifier);
-        }
-        let mut path = [[0_u8; 32]; NULLIFIER_TREE_DEPTH];
+    pub fn root(&self) -> [u8; 32] { self.value(NULLIFIER_TREE_DEPTH, [0; 32]) }
+    pub fn empty_path(&self, mut index: [u8; 32]) -> Result<[[u8; 32]; NULLIFIER_TREE_DEPTH], PolicyError> {
+        if self.value(0, index) != empty_leaf() { return Err(PolicyError::C5Nullifier); }
+        let mut path = [[0; 32]; NULLIFIER_TREE_DEPTH];
         for (depth, sibling) in path.iter_mut().enumerate() {
-            *sibling = self.value(depth, (index >> depth) ^ 1);
+            let mut adjacent = index; adjacent[31] ^= 1;
+            *sibling = self.value(depth, adjacent);
+            shift_index(&mut index);
         }
         Ok(path)
     }
-
-    pub fn insert(&mut self, index: u32) -> Result<(), PolicyError> {
-        if self.value(0, index) != empty_leaf() {
-            return Err(PolicyError::C5Nullifier);
-        }
-
-        let defaults = nullifier_empty_hashes();
+    pub fn insert(&mut self, mut index: [u8; 32]) -> Result<(), PolicyError> {
+        let path = self.empty_path(index)?;
         let mut current = used_leaf();
-        let mut node_index = index;
-        self.nodes.insert((0, node_index), current);
-        for depth in 0..NULLIFIER_TREE_DEPTH {
-            let sibling = self.value(depth, node_index ^ 1);
-            current = if node_index & 1 == 0 {
-                nullifier_parent(current, sibling)
-            } else {
-                nullifier_parent(sibling, current)
-            };
-            node_index >>= 1;
-            if current == defaults[depth + 1] {
-                self.nodes.remove(&(depth + 1, node_index));
-            } else {
-                self.nodes.insert((depth + 1, node_index), current);
-            }
+        self.nodes.insert((0, index), current);
+        for (depth, sibling) in path.iter().enumerate() {
+            current = if index[31] & 1 == 0 { nullifier_parent(current, *sibling) }
+                else { nullifier_parent(*sibling, current) };
+            shift_index(&mut index);
+            self.nodes.insert((depth + 1, index), current);
         }
         Ok(())
     }
-
-    fn value(&self, depth: usize, index: u32) -> [u8; 32] {
-        self.nodes
-            .get(&(depth, index))
-            .copied()
-            .unwrap_or_else(|| nullifier_empty_hashes()[depth])
+    fn value(&self, depth: usize, index: [u8; 32]) -> [u8; 32] {
+        self.nodes.get(&(depth, index)).copied().unwrap_or(self.defaults[depth])
     }
+}
+fn shift_index(index: &mut [u8; 32]) {
+    let mut carry = 0;
+    for byte in index { let next = (*byte & 1) << 7; *byte = (*byte >> 1) | carry; carry = next; }
 }
 
 fn nullifier_empty_hashes() -> [[u8; 32]; NULLIFIER_TREE_DEPTH + 1] {
@@ -442,12 +458,14 @@ fn nullifier_empty_hashes() -> [[u8; 32]; NULLIFIER_TREE_DEPTH + 1] {
     hashes
 }
 
-fn credential_root(
+pub fn credential_root(
     mut index: usize,
     event: &EpcisEventV1,
+    owner: [u8; 32],
+    key_commitment: [u8; 32],
     path: &[[u8; 32]; CERTIFICATE_TREE_DEPTH],
 ) -> [u8; 32] {
-    let mut current = certificate_leaf(index, event);
+    let mut current = certificate_leaf(index, event, owner, key_commitment);
     for sibling in path {
         current = if index & 1 == 0 {
             certificate_parent(current, *sibling)
@@ -459,40 +477,78 @@ fn credential_root(
     current
 }
 
-fn sparse_root(
-    mut index: u32,
+pub fn sparse_root(
+    mut index: [u8; 32],
     mut current: [u8; 32],
     path: &[[u8; 32]; NULLIFIER_TREE_DEPTH],
 ) -> [u8; 32] {
     for sibling in path {
-        current = if index & 1 == 0 {
+        current = if index[31] & 1 == 0 {
             nullifier_parent(current, *sibling)
         } else {
             nullifier_parent(*sibling, current)
         };
-        index >>= 1;
+        shift_index(&mut index);
     }
     current
 }
 
 fn empty_leaf() -> [u8; 32] {
-    hash_parts(&[b"EUDR:E2E:C5:LEAF:V1", &[0]])
+    hash_parts(&[b"EUDR:E2E:C5:LEAF:V2", &[0]])
 }
 
 fn used_leaf() -> [u8; 32] {
-    hash_parts(&[b"EUDR:E2E:C5:LEAF:V1", &[1]])
+    hash_parts(&[b"EUDR:E2E:C5:LEAF:V2", &[1]])
 }
 
-fn nullifier_hash(lot_id: u64, nullifier_secret: [u8; 32]) -> [u8; 32] {
-    hash_parts(&[
-        b"EUDR:E2E:NULLIFIER:V1",
-        &lot_id.to_be_bytes(),
-        &nullifier_secret,
-    ])
+pub fn nullifier_key_commitment(key: [u8; 32]) -> [u8; 32] {
+    hash_parts(&[b"EUDR:NULLIFIER-KEY:V2", &key])
+}
+fn hmac(key: [u8; 32], parts: &[&[u8]]) -> [u8; 32] {
+    let mut mac = Hmac::<Sha256>::new_from_slice(&key).expect("32-byte HMAC key");
+    for part in parts { mac.update(part); }
+    mac.finalize().into_bytes().into()
+}
+pub fn nullifier_hash(lot_id: u64, key: [u8; 32]) -> [u8; 32] {
+    let secret = hmac(key, &[b"EUDR:LOT-SECRET:V2", &lot_id.to_be_bytes()]);
+    hash_parts(&[b"EUDR:E2E:NULLIFIER:V2", &lot_id.to_be_bytes(), &secret])
+}
+pub fn event_salt(nonce: [u8; 32], index: usize) -> [u8; 32] {
+    hmac(nonce, &[b"EUDR:EVENT-SALT:V2", &(index as u64).to_be_bytes()])
+}
+pub fn event_leaf(index: usize, salt: [u8; 32], bytes: &[u8; EPCIS_EVENT_BYTES]) -> [u8; 32] {
+    hash_parts(&[b"EUDR:EVENT:V2", &(index as u64).to_be_bytes(), &salt, bytes])
+}
+pub fn event_parent(left: [u8; 32], right: [u8; 32]) -> [u8; 32] {
+    hash_parts(&[b"EUDR:EVENT-NODE:V2", &left, &right])
+}
+pub fn batch_commitment(count: usize, root: [u8; 32]) -> [u8; 32] {
+    hash_parts(&[b"EUDR:EVENT-BATCH:V2", &(count as u64).to_be_bytes(), &root])
+}
+pub fn event_tree(events: &[EventWitness], nonce: [u8; 32]) -> Vec<Vec<[u8; 32]>> {
+    let width = events.len().max(1).next_power_of_two();
+    let leaves: Vec<[u8; 32]> = (0..width).map(|i| if i < events.len() {
+        event_leaf(i, event_salt(nonce, i), &events[i].event_bytes)
+    } else { hash_parts(&[b"EUDR:EVENT-PADDING:V2", &(i as u64).to_be_bytes()]) }).collect();
+    let mut tree = vec![leaves];
+    while tree.last().unwrap().len() > 1 {
+        let next = tree.last().unwrap().chunks_exact(2).map(|x| event_parent(x[0], x[1])).collect();
+        tree.push(next);
+    }
+    tree
+}
+pub fn event_batch_commitment(events: &[EventWitness], nonce: [u8; 32]) -> [u8; 32] {
+    batch_commitment(events.len(), event_tree(events, nonce).last().unwrap()[0])
+}
+pub fn verify_event_opening(count: usize, index: usize, salt: [u8; 32], bytes: &[u8; EPCIS_EVENT_BYTES], path: &[[u8; 32]], commitment: [u8; 32]) -> bool {
+    if !(MIN_EVENTS..=MAX_EVENTS).contains(&count) || index >= count || path.len() != count.next_power_of_two().ilog2() as usize { return false; }
+    let mut node = event_leaf(index, salt, bytes); let mut slot = index;
+    for sibling in path { node = if slot & 1 == 0 { event_parent(node, *sibling) } else { event_parent(*sibling, node) }; slot >>= 1; }
+    batch_commitment(count, node) == commitment
 }
 
 fn nullifier_parent(left: [u8; 32], right: [u8; 32]) -> [u8; 32] {
-    hash_parts(&[b"EUDR:E2E:C5:NODE:V1", &left, &right])
+    hash_parts(&[b"EUDR:E2E:C5:NODE:V2", &left, &right])
 }
 
 fn hash_parts(parts: &[&[u8]]) -> [u8; 32] {
@@ -507,9 +563,9 @@ fn validate_polygon(vertices: &[PointE6]) -> Result<(), PolicyError> {
     if !(3..=MAX_POLYGON_VERTICES).contains(&vertices.len()) {
         return Err(PolicyError::InvalidPolygon);
     }
-    for point in vertices {
-        point.validate()?;
-    }
+    for point in vertices { point.validate()?; }
+    let area: i128=vertices.iter().enumerate().map(|(i,p)| {let q=vertices[(i+1)%vertices.len()];p.longitude_e6 as i128*q.latitude_e6 as i128-q.longitude_e6 as i128*p.latitude_e6 as i128}).sum();
+    if area==0 { return Err(PolicyError::InvalidPolygon); }
     for index in 0..vertices.len() {
         if vertices[index] == vertices[(index + 1) % vertices.len()] {
             return Err(PolicyError::InvalidPolygon);
@@ -728,4 +784,16 @@ mod tests {
 
         assert_eq!(map.empty_path(indices[1]), Err(PolicyError::C5Nullifier));
     }
+    #[test]
+    fn full_digest_indices_do_not_alias_on_the_first_word() {
+        let a = [7_u8; 32];
+        let mut b = a;
+        b[31] ^= 1;
+        let mut map = SparseNullifierMap::default();
+        map.insert(a).unwrap();
+        assert!(map.empty_path(b).is_ok());
+        map.insert(b).unwrap();
+        assert_eq!(map.empty_path(a), Err(PolicyError::C5Nullifier));
+    }
+
 }

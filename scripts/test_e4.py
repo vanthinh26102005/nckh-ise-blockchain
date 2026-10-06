@@ -4,6 +4,7 @@
 Run: python3 scripts/test_e4.py   (or `make e4-test`)
 """
 
+import copy
 import importlib.util
 import json
 import random
@@ -26,6 +27,55 @@ e4_plan = _load("e4_plan")
 e4_run = _load("e4_run")
 e4_analyze = _load("e4_analyze")
 e4_merge = _load("e4_merge")
+e4_preflight = _load("e4_preflight")
+from policy_test_fixtures import receipt
+
+
+PAIR = {"certificateRoot": "0x" + "11" * 32, "polygonCommitment": "0x" + "22" * 32}
+
+
+def preflight_fixture():
+    metadata = {"protocolVersion": 2, "verificationKind": "sp1-groth16", "registry_manifest_sha256": "a" * 64,
+                "acceptedPolicies": [PAIR], "hardware": {"hostname": "fixture", "cpu_model": "fixture", "cpu_logical": 2, "ram_bytes": 1000, "gpu_model_driver": "fixture", "cuda_toolkit": "fixture", "os": "fixture"}, "samples": []}
+    keys = {**PAIR, "workloadDigest": "0x" + "33" * 32, "leafVKeyDigest": "0x" + "44" * 32, "aggregateVKeyDigest": "0x" + "55" * 32, "oldNullifierRoot": "0x" + f"{1:064x}", "newNullifierRoot": "0x" + f"{2:064x}"}
+    for events in (8, 64):
+        for prover in ("cpu", "cuda"):
+            for repetition in range(5):
+                metadata["samples"].append({"events": events, "prover": prover, "repetition": repetition, "leaf_ms": 10, "aggregate_ms": 20, **keys,
+                    "receipt": receipt("EpochAggregated",event_count=events*2,namespace=events+repetition+(100 if prover=="cuda" else 0))})
+    return metadata
+
+
+class TestPreflight(unittest.TestCase):
+    def test_cpu_gpu_requires_five_matching_repetitions_and_receipts(self):
+        record = preflight_fixture()
+        e4_preflight.validate_preflight(record)
+        record["samples"][0]["workloadDigest"] = "0x" + "88" * 32
+        with self.assertRaisesRegex(ValueError, "mismatch"):
+            e4_preflight.validate_preflight(record)
+        record = preflight_fixture()
+        record["samples"].pop()
+        with self.assertRaisesRegex(ValueError, "five CPU/GPU"):
+            e4_preflight.validate_preflight(record)
+        record = preflight_fixture()
+        record["samples"][0]["receipt"]["status"] = 0
+        with self.assertRaisesRegex(ValueError, "successful Anvil"):
+            e4_preflight.validate_preflight(record)
+
+    def test_fixture_receipt_policy_disagreement_is_rejected(self):
+        record = preflight_fixture()
+        record["samples"][0]["receipt"]["certificateRoot"] = "0x" + "ff" * 32
+        with self.assertRaisesRegex(ValueError, "disagrees"):
+            e4_preflight.validate_preflight(record)
+
+    def test_receipt_rejects_fake_hash_address_event_args_and_root_chain(self):
+        for field, value in (("transactionHash", "0xfake"),("registry","fixture"),("policyValid",False)):
+            value_receipt=receipt();value_receipt[field]=value
+            with self.assertRaises(ValueError):e4_preflight.validate_receipt(value_receipt)
+        value_receipt=receipt();value_receipt["anchorEvent"]["args"]["newNullifierRoot"]="0x"+"ff"*32
+        with self.assertRaises(ValueError):e4_preflight.validate_receipt(value_receipt)
+        chain=[receipt(index=0),receipt(index=2)]
+        with self.assertRaisesRegex(ValueError,"contiguous"):e4_preflight.validate_receipt_chain(chain)
 
 
 class TestPlan(unittest.TestCase):
@@ -117,6 +167,12 @@ class TestAnalyzeValidation(unittest.TestCase):
         cells = e4_analyze.aggregate_cells(records)
         return e4_analyze.validate(records, manifest, cells, require_real, require_single_host)
 
+    def test_formal_rejects_historical_protocol_records(self):
+        record = _cell_record("c", 125, 16, 30, 1)
+        record.update(offered_events=16, committed_events=16, transactions=[{"transactionHash": "0x1"}] * 4)
+        errors, _ = self._validate([record], {"runs_total": 1, "e3_gate_passed": True, "preflight_ab": {"leaf8_cpu_ms": 1}, "seeds_per_cell": 1}, require_real=True)
+        self.assertTrue(any("policy-v2" in error for error in errors))
+
     def test_require_real_rejects_mock(self):
         recs = [_cell_record("c", 1, 8, 30, 0, executor="mock")]
         errors, _ = self._validate(recs, {"seeds_per_cell": 1}, require_real=True)
@@ -137,12 +193,61 @@ class TestAnalyzeValidation(unittest.TestCase):
         errors, _ = self._validate(recs, {"seeds_per_cell": 1})
         self.assertTrue(any("epochs_completed" in e for e in errors))
 
+    def test_gas_and_calldata_are_per_shipment_and_medians_keep_saturation(self):
+        first = _cell_record("c", 125, 16, 30, 1)
+        second = _cell_record("c", 125, 16, 30, 2, status="saturated", epc=2)
+        for record, shipments, gas in [(first, 4, 400), (second, 2, 100)]:
+            record.update(committed_shipments=shipments, elapsed_s=60)
+            record["gas_used"] = {"mean": gas / 4, "sum": gas}
+            record["calldata_bytes"] = {"mean": 100, "sum": 400}
+        cell = e4_analyze.aggregate_cells([first, second])[0]
+        self.assertEqual(cell["gas_per_shipment_median"], 75)
+        self.assertEqual(cell["calldata_bytes_per_shipment_median"], 150)
+        self.assertEqual(cell["throughput_shipments_min_median"], 3)
+        self.assertEqual(cell["saturation_rate"], .5)
+
     def test_saturated_cells_kept(self):
         recs = [_cell_record("c", 1, 8, 30, 0, status="saturated", epc=2)]
         cells = e4_analyze.aggregate_cells(recs)
         self.assertEqual(cells[0]["n_saturated"], 1)
         # saturated must not be dropped from the aggregate
         self.assertEqual(cells[0]["runs"], 1)
+
+
+class TestFormalCoverage(unittest.TestCase):
+    def test_complete_predefined_screening_v2_records_pass_and_tampered_axes_fail(self):
+        plan = list(e4_plan.generate_rows({"screening": e4_plan.PHASES["screening"]}))
+        records = []
+        for row in plan:
+            record = _cell_record(row["cell_id"], row["np"], row["shipment"], row["epoch_s"], row["seed"])
+            record.update(phase="screening", offered_events=16, committed_events=16, elapsed_s=60,
+                          protocolVersion=2, verificationKind="sp1-groth16", workload_digest="a" * 64, registry_manifest_sha256="a" * 64,
+                          registryManifestSHA256="a"*64,sourceRevision="b"*40)
+            record["trustedWorkload"]={"seed":row["seed"],"np":row["np"],"shipment":row["shipment"],"epoch_s":row["epoch_s"],"epochs":4,
+                "offeredEvents":16,"offeredShipments":1,"digest":"0x"+"a"*64}
+            record["transactions"] = [receipt(index=i,namespace=row["seed"]) for i in range(4)]
+            record["gas_used"] = {"count": 4, "mean": 100, "sum": 400}
+            record["calldata_bytes"] = {"count": 4, "mean": 100, "sum": 400}
+            records.append(record)
+        preflight = preflight_fixture()
+        manifest = {"phase": "screening", "runs_total": 80, "seeds_per_cell": 1, "e3_gate_passed": True,
+                    "protocolVersion": 2, "verificationKind": "sp1-groth16", "registry_manifest_sha256": "a" * 64,
+                    "acceptedPolicies": [PAIR], "preflight_ab": preflight, "hardware": preflight["hardware"],
+                    "software":{"git_commit":"b"*40},"trustedWorkloads":[record["trustedWorkload"] for record in records]}
+        string_plan = [{key: str(value) for key, value in row.items()} for row in plan]
+        errors, _ = e4_analyze.validate(records, manifest, e4_analyze.aggregate_cells(records), True, True, string_plan)
+        self.assertEqual(errors, [])
+        records[0]["sourceRevision"]="c"*40
+        errors,_=e4_analyze.validate(records,manifest,e4_analyze.aggregate_cells(records),True,True,string_plan)
+        self.assertTrue(any("provenance differs" in error for error in errors))
+        records[0]["sourceRevision"]="b"*40
+        records[0]["shipment"] = 999
+        errors, _ = e4_analyze.validate(records, manifest, e4_analyze.aggregate_cells(records), True, True, string_plan)
+        self.assertTrue(any("axes do not match" in error for error in errors))
+
+    def test_formal_grid_cannot_be_skipped_by_omitting_plan(self):
+        errors,_=e4_analyze.validate([], {"phase":"screening","runs_total":0}, [],True,True)
+        self.assertTrue(any("predefined plan" in error for error in errors))
 
 
 class TestMerge(unittest.TestCase):
@@ -152,7 +257,7 @@ class TestMerge(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "incomplete"):
             e4_merge.merge([row], [], "screening")
 
-    def test_one_complete_real_shard(self):
+    def test_historical_single_shard_cannot_claim_a_complete_formal_phase(self):
         row = {"phase": "screening", "run_id": "cell#s7", "cell_id": "cell",
                "np": "125", "shipment": "16", "epoch_s": "30", "seed": "7"}
         record = _cell_record("cell", 125, 16, 30, 7)
@@ -166,9 +271,8 @@ class TestMerge(unittest.TestCase):
             raw = Path(directory) / "raw.jsonl"
             raw.write_text(json.dumps(record) + "\n")
             raw.with_name("manifest.json").write_text(json.dumps(manifest))
-            merged, metadata = e4_merge.merge([row], [raw], "screening")
-        self.assertEqual(len(merged), 1)
-        self.assertEqual(metadata["runs_total"], 1)
+            with self.assertRaisesRegex(ValueError, "policy-v2"):
+                e4_merge.merge([row], [raw], "screening")
 
 
 if __name__ == "__main__":

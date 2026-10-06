@@ -10,6 +10,11 @@
     "anvil:smoke": "node test/anvil_sp1_smoke.mjs",
     "anvil:e2-anchor": "node test/anvil_sp1_anchor_server.mjs",
     "anvil:e3-smoke": "node test/anvil_e3_smoke.mjs",
-    "anvil:e3-vecro-smoke": "node test/anvil_e3_vecro_smoke.mjs"
+    "anvil:e3-vecro-smoke": "node test/anvil_e3_vecro_smoke.mjs",
+    "test": "node test/policy_v2_test.mjs",
+    "anvil:policy-v2-test": "node test/anvil_policy_v2_test.mjs",
+    "anvil:five-epochs": "node test/five_epoch_smoke.mjs",
+    "sepolia:deploy": "node test/sepolia_deploy.mjs",
+    "anvil:policy-server-test": "node test/anvil_policy_server_test.mjs"
   }
 }

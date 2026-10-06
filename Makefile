@@ -1,39 +1,35 @@
-.PHONY: bootstrap test e1 e1-quick e1-strict e2 e2-quick e2-strict figs clean-results clean-e2 \
+.PHONY: local-check local-execute hpc-proof-tests hpc-plan e2-legacy-mock e2-legacy-mock-quick e2-legacy-anvil-cache bootstrap test e1 e1-quick e1-strict e2 e2-quick e2-strict figs clean-results clean-e2 \
 	e3-check e3-build e3-build-cuda e3-gate e3-run e3-analyze \
 	e4-plan e4-preflight e4-run-mock e4-analyze-mock e4-run e4-merge e4-analyze e4-test clean-e4
 
 bootstrap:
 	@bash scripts/bootstrap.sh
 
-test:
-	cargo test --workspace
+test: local-check
 
-e1:
-	@mkdir -p results/e1/full
-	cargo run --release -p e1-bench -- --out results/e1/full/raw.csv --events 8,16,32,64 --seeds 30 --circuits all --profile coffee-default --jobs 1
-	python3 scripts/e1_analyze.py --raw results/e1/full/raw.csv --out-dir results/e1/full
-
+e1: e1-strict
 e1-quick:
-	@mkdir -p results/e1/quick
-	cargo run --release -p e1-bench -- --out results/e1/quick/raw.csv --events 8 --seeds 1 --circuits all --profile coffee-small --jobs 1 --strict-output
-	python3 scripts/e1_analyze.py --raw results/e1/quick/raw.csv --table-out results/e1/quick/summary.csv --plots-out results/e1/quick/plots.png --metadata-out results/e1/quick/metadata.json --report-out results/e1/quick/report.md --expected-seeds 1 --command "make e1-quick"
+	@test -n "$(E1_RAW_ROOT)" || (echo 'Set E1_RAW_ROOT outside Git' >&2; exit 2)
+	cargo run --release -p e1-bench -- --out "$(E1_RAW_ROOT)/raw.csv" --events 8 --seeds 1 --circuits all --profile coffee-small --credential-depth "$(E1_CREDENTIAL_DEPTH)" --jobs 1 --strict-output
 
+E1_CREDENTIAL_DEPTH ?= 16
 e1-strict:
-	@mkdir -p results/e1/strict
-	cargo run --release -p e1-bench -- --out results/e1/strict/raw.csv --events 8,16,32,64 --seeds 30 --circuits all --profile coffee-default --jobs 1 --strict-output
-	python3 scripts/e1_analyze.py --raw results/e1/strict/raw.csv --table-out results/e1/strict/summary.csv --plots-out results/e1/strict/plots.png --metadata-out results/e1/strict/metadata.json --report-out results/e1/strict/report.md --expected-seeds 30 --command "make e1-strict"
+	@test -n "$(E1_RAW_ROOT)" || (echo 'Set E1_RAW_ROOT outside Git' >&2; exit 2)
+	cargo run --release -p e1-bench -- --out "$(E1_RAW_ROOT)/raw.csv" --events 8,16,32,64 --seeds 30 --circuits all --profile coffee-default --credential-depth "$(E1_CREDENTIAL_DEPTH)" --jobs 1 --strict-output
+	python3 scripts/e1_analyze.py --raw "$(E1_RAW_ROOT)/raw.csv" --out-dir "$(E1_RAW_ROOT)" --strict --expected-seeds 30 --expected-events 8,16,32,64 --expected-depths "$(E1_CREDENTIAL_DEPTH)" --expected-circuits c1_polygon_outside,c2_poseidon2_merkle,c3_threshold_time,c4_poseidon2_actor_authorization,c5_poseidon2_sparse_nullifier_depth32 --command "make e1-strict"
 
-e2-quick:
+
+e2-legacy-mock-quick:
 	@mkdir -p results/e2/quick
 	cargo run --release -p e2-bench -- --profile quick --lambda-events-per-min 480 --duration-min 5 --seeds 3 --l1-mode mock --out results/e2/quick/raw.csv --summary-out results/e2/quick/summary.csv --metadata-out results/e2/quick/metadata.json
 	python3 scripts/e2_analyze.py --raw results/e2/quick/raw.csv --out-dir results/e2/quick --cdf-out results/e2/quick/cdf.png --report-out results/e2/quick/report.md
 
-e2:
+e2-legacy-mock:
 	@mkdir -p results/e2/full
 	cargo run --release -p e2-bench -- --profile full --lambda-events-per-min 480 --duration-min 60 --seeds 30 --l1-mode mock --out results/e2/full/raw.csv --summary-out results/e2/full/summary.csv --metadata-out results/e2/full/metadata.json
 	python3 scripts/e2_analyze.py --raw results/e2/full/raw.csv --out-dir results/e2/full --cdf-out results/e2/full/cdf.png --report-out results/e2/full/report.md
 
-e2-strict:
+e2-legacy-anvil-cache:
 	@mkdir -p results/e2/strict
 	cargo run --release -p e2-bench -- --profile full --lambda-events-per-min 480 --duration-min 60 --seeds 30 --l1-mode anvil --out results/e2/strict/raw.csv --summary-out results/e2/strict/summary.csv --metadata-out results/e2/strict/metadata.json
 	python3 scripts/e2_analyze.py --raw results/e2/strict/raw.csv --out-dir results/e2/strict --cdf-out results/e2/strict/cdf.png --report-out results/e2/strict/report.md
@@ -65,10 +61,10 @@ e3-build-cuda:
 	cargo build --release --manifest-path crates/sp1-e2e/Cargo.toml -p sp1-e2e --bin e3_epoch_gate --bin e4_real_cell --features cuda
 
 # Start Fabric Gateway + Anvil first. Supply both paths outside the repository.
-e3-gate: e3-build
-	@test -n "$(E3_FIXTURE)" && test -n "$(E3_RECEIPT)" || (echo 'Set E3_FIXTURE and E3_RECEIPT to output paths outside Git' >&2; exit 2)
-	crates/sp1-e2e/target/release/e3_epoch_gate --out "$(abspath $(E3_FIXTURE))"
-	cd contracts && E3_FIXTURE="$(abspath $(E3_FIXTURE))" npm run --silent anvil:e3-smoke > "$(abspath $(E3_RECEIPT))"
+e3-gate:
+	@test -n "$(E3_FIXTURE)" && test -n "$(E3_RECEIPT)" && test -f "$(POLICY_MANIFEST)" && test -n "$(E3_EPOCH_ID)" || (echo 'Set E3_FIXTURE and E3_RECEIPT to output paths outside Git' >&2; exit 2)
+	POLICY_MANIFEST="$(abspath $(POLICY_MANIFEST))" crates/sp1-e2e/target/release/e3_epoch_gate --prover "$(E3_PROVER)" --epoch-id "$(E3_EPOCH_ID)" --out "$(abspath $(E3_FIXTURE))"
+	cd contracts && POLICY_MANIFEST="$(abspath $(POLICY_MANIFEST))" E3_FIXTURE="$(abspath $(E3_FIXTURE))" npm run --silent anvil:e3-smoke > "$(abspath $(E3_RECEIPT))"
 	python3 scripts/e3_gate_manifest.py --fixture "$(E3_FIXTURE)" --receipt "$(E3_RECEIPT)" \
 		--out results/e3/gate_manifest.json --git-commit "$(shell git rev-parse HEAD)"
 
@@ -76,9 +72,9 @@ e3-gate: e3-build
 E3_PROVER ?= cuda
 E3_WALL_TIME_S ?= 7200
 e3-run:
-	@test -n "$(E3_MODE)" && test -n "$(E3_SEED)" && test -n "$(E3_RAW_ROOT)" || (echo 'Set E3_MODE, E3_SEED, E3_RAW_ROOT' >&2; exit 2)
+	@test -n "$(E3_MODE)" && test -n "$(E3_SEED)" && test -n "$(E3_RAW_ROOT)" && test -f "$(POLICY_MANIFEST)" && test -f "$(E3_ISOLATION)" || (echo 'Set E3_MODE, E3_SEED, E3_RAW_ROOT' >&2; exit 2)
 	python3 scripts/e3_run.py --binary crates/sp1-e2e/target/release/e4_real_cell \
-		--gate results/e3/gate_manifest.json --mode "$(E3_MODE)" --seed "$(E3_SEED)" \
+		--policy-manifest "$(POLICY_MANIFEST)" --isolation-manifest "$(E3_ISOLATION)" --gate results/e3/gate_manifest.json --mode "$(E3_MODE)" --seed "$(E3_SEED)" \
 		--prover "$(E3_PROVER)" --wall-time-s "$(E3_WALL_TIME_S)" \
 		--out "$(E3_RAW_ROOT)/$(E3_MODE)-$(E3_SEED).json" --git-commit "$(shell git rev-parse HEAD)"
 
@@ -98,7 +94,7 @@ e4-preflight: e3-build-cuda
 	@test -n "$(E4_PREFLIGHT_RAW_ROOT)" && test -n "$(E4_PREFLIGHT)" || (echo 'Set E4_PREFLIGHT_RAW_ROOT and E4_PREFLIGHT' >&2; exit 2)
 	python3 scripts/e4_preflight.py --binary crates/sp1-e2e/target/release/e3_epoch_gate \
 		--raw-dir "$(E4_PREFLIGHT_RAW_ROOT)" --out "$(E4_PREFLIGHT)" \
-		--epoch-base "$(E4_EPOCH_BASE)" --git-commit "$(shell git rev-parse HEAD)"
+		--policy-manifest "$(POLICY_MANIFEST)" --epoch-base "$(E4_EPOCH_BASE)" --git-commit "$(shell git rev-parse HEAD)"
 
 # Harness/schema/analysis self-test via the mock executor. NOT valid E4 evidence.
 e4-run-mock: e4-plan
@@ -128,7 +124,7 @@ e4-run: e4-plan
 		$(if $(E4_PLAN_RUN_ID),--run-id "$(E4_PLAN_RUN_ID)",) \
 		$(if $(E4_PLAN_INDEX),--plan-index "$(E4_PLAN_INDEX)",) \
 		--real-binary crates/sp1-e2e/target/release/e4_real_cell --prover "$(E4_PROVER)" \
-		--e3-gate-manifest "$(E3_GATE_MANIFEST)" --preflight-ab "$(E4_PREFLIGHT)" \
+		--policy-manifest "$(POLICY_MANIFEST)" --e3-gate-manifest "$(E3_GATE_MANIFEST)" --preflight-ab "$(E4_PREFLIGHT)" \
 		--wall-time-s "$(E4_WALL_TIME_S)" \
 		--out "$(E4_RUN_ROOT)/$(E4_PHASE)/$(E4_RUN_ID)/raw.jsonl" \
 		--manifest-out "$(E4_RUN_ROOT)/$(E4_PHASE)/$(E4_RUN_ID)/manifest.json" \
@@ -150,3 +146,35 @@ e4-analyze:
 
 clean-e4:
 	rm -rf results/e4/screening results/e4/confirmation results/e4/plan.csv results/e4/plan.summary.json
+
+# Paper route: real E2 only. Legacy targets above are explicitly cache/mock research.
+E2_PROVER ?= cuda
+e2 e2-strict:
+	@test -n "$(E2_RAW)" && test -n "$(E2_ANALYSIS)" && test -f "$(POLICY_MANIFEST)" && test -f "$(E2_PREFLIGHT)" || (echo 'Set external E2_RAW/E2_ANALYSIS, trusted POLICY_MANIFEST and E2_PREFLIGHT' >&2; exit 2)
+	POLICY_MANIFEST="$(POLICY_MANIFEST)" crates/sp1-e2e/target/release/e2_real_benchmark --lambda-events-per-min 480 --duration-min 60 --seeds 30 --prover "$(E2_PROVER)" --preflight "$(E2_PREFLIGHT)" --out "$(E2_RAW)"
+	python3 scripts/e2_real_analyze.py --raw "$(E2_RAW)" --policy-manifest "$(POLICY_MANIFEST)" --out "$(E2_ANALYSIS)"
+
+e2-quick: e2-legacy-mock-quick
+
+# Sequential, lightweight; no .prove() tests or recursive/Groth16 proofs.
+local-check:
+	CARGO_BUILD_JOBS=1 RAYON_NUM_THREADS=2 cargo test --offline -p e1-bench --lib
+	CARGO_BUILD_JOBS=1 RAYON_NUM_THREADS=2 cargo test --offline --manifest-path crates/sp1-e2e/Cargo.toml -p eudr-policy
+	CARGO_BUILD_JOBS=1 RAYON_NUM_THREADS=2 cargo test --offline --manifest-path crates/sp1-e2e/Cargo.toml -p sp1-e2e --lib --bin e2_real_benchmark --bin e4_real_cell
+	CARGO_BUILD_JOBS=1 RAYON_NUM_THREADS=2 cargo test --offline --manifest-path crates/epcis-mapper/Cargo.toml
+	CARGO_BUILD_JOBS=1 RAYON_NUM_THREADS=2 cargo test --offline --manifest-path crates/disclosure/Cargo.toml
+	uv run --with pandas --with numpy python -m unittest discover -s scripts -p 'test_*.py'
+	npm test --prefix contracts
+
+local-execute:
+	@test -n "$(LOCAL_REPORT)" || (echo 'Set LOCAL_REPORT to a new path outside Git' >&2; exit 2)
+	CARGO_BUILD_JOBS=1 RAYON_NUM_THREADS=2 cargo build --offline --manifest-path crates/sp1-e2e/Cargo.toml -p sp1-e2e --bin local_execute
+	python3 scripts/local_watchdog.py --report "$(LOCAL_REPORT)" -- crates/sp1-e2e/target/debug/local_execute $(if $(LOCAL_WITNESS),"$(LOCAL_WITNESS)",)
+
+hpc-proof-tests:
+	@test -n "$$SLURM_JOB_ID" || (echo 'Run ignored proof tests inside the reviewed HPC allocation' >&2; exit 2)
+	cargo test --release -p e1-bench --features recursion --lib -- --ignored
+	cargo test --release --manifest-path crates/sp1-e2e/Cargo.toml -p sp1-e2e --lib -- --ignored
+
+hpc-plan:
+	python3 scripts/hpc_jobs.py --config "$(HPC_CONFIG)" --phase "$(HPC_PHASE)" --runtime-root "$(HPC_RUNTIME_ROOT)" --out "$(HPC_SCRIPT)"

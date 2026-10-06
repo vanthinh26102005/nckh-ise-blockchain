@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
 pub const LEAF_PUBLIC_BYTES: usize = 352;
-pub const EPOCH_PUBLIC_BYTES: usize = 288;
+pub const EPOCH_PUBLIC_BYTES: usize = 352;
 pub const MAX_FAN_IN: usize = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -13,7 +13,7 @@ pub enum EpochChild {
 }
 
 impl EpochChild {
-    fn bytes(&self) -> &[u8] {
+    pub fn bytes(&self) -> &[u8] {
         match self {
             Self::Leaf(value) => value,
             Self::Aggregate(value) => value,
@@ -39,6 +39,8 @@ pub struct EpochPublicValues {
     pub valid: bool,
     pub leaf_vk_digest: [u8; 32],
     pub aggregate_vk_digest: [u8; 32],
+    pub certificate_root: [u8; 32],
+    pub polygon_commitment: [u8; 32],
 }
 
 impl EpochInput {
@@ -47,7 +49,7 @@ impl EpochInput {
             return Err("epoch fan-in must be 1..=8");
         }
         let mut out = Vec::with_capacity(66 + self.children.len() * (1 + LEAF_PUBLIC_BYTES));
-        out.push(1); // wire version
+        out.push(2); // wire version
         out.extend_from_slice(&self.leaf_vk_digest);
         out.extend_from_slice(&self.aggregate_vk_digest);
         out.push(self.children.len() as u8);
@@ -62,7 +64,7 @@ impl EpochInput {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, &'static str> {
-        if bytes.len() < 66 || bytes[0] != 1 || !(1..=MAX_FAN_IN).contains(&(bytes[65] as usize)) {
+        if bytes.len() < 66 || bytes[0] != 2 || !(1..=MAX_FAN_IN).contains(&(bytes[65] as usize)) {
             return Err("invalid epoch input header");
         }
         let mut cursor = 66;
@@ -78,6 +80,8 @@ impl EpochInput {
             let data = bytes
                 .get(cursor..cursor + width)
                 .ok_or("truncated epoch child")?;
+            if kind==0 { super::PolicyPublicValues::abi_decode(data).map_err(|_|"noncanonical leaf ABI")?; }
+            else { for word in [0,4,5,6] { let value=word_u64(data,word)?;if word==6 && value>1 {return Err("noncanonical ABI boolean");} } }
             children.push(if kind == 0 {
                 EpochChild::Leaf(data.try_into().unwrap())
             } else {
@@ -113,11 +117,13 @@ impl EpochPublicValues {
         out[223] = u8::from(self.valid);
         out[224..256].copy_from_slice(&self.leaf_vk_digest);
         out[256..288].copy_from_slice(&self.aggregate_vk_digest);
+        out[288..320].copy_from_slice(&self.certificate_root);
+        out[320..352].copy_from_slice(&self.polygon_commitment);
         out
     }
 }
 
-fn word_u64(bytes: &[u8], index: usize) -> Result<u64, &'static str> {
+pub(crate) fn word_u64(bytes: &[u8], index: usize) -> Result<u64, &'static str> {
     let word = &bytes[index * 32..(index + 1) * 32];
     if word[..24] != [0; 24] {
         return Err("noncanonical ABI integer");
@@ -132,7 +138,7 @@ pub fn evaluate(input: &EpochInput) -> Result<EpochPublicValues, &'static str> {
         return Err("epoch fan-in must be 1..=8");
     }
     let mut commitment = Sha256::new();
-    commitment.update(b"EUDR:E3:EPOCH:V1");
+    commitment.update(b"EUDR:E3:EPOCH:V2");
     commitment.update(input.leaf_vk_digest);
     commitment.update(input.aggregate_vk_digest);
     commitment.update([input.children.len() as u8]);
@@ -142,10 +148,15 @@ pub fn evaluate(input: &EpochInput) -> Result<EpochPublicValues, &'static str> {
     let mut event_count = 0_u64;
     let mut lot_count = 0_u64;
     let mut seen_batches = HashSet::new();
+    let mut shared_roots: Option<([u8; 32], [u8; 32])> = None;
 
     for (index, child) in input.children.iter().enumerate() {
         let value = child.bytes();
         let id = word_u64(value, 0)?;
+        let root_offset = if matches!(child, EpochChild::Leaf(_)) { 128 } else { 288 };
+        let roots = (value[root_offset..root_offset+32].try_into().unwrap(), value[root_offset+32..root_offset+64].try_into().unwrap());
+        if shared_roots.is_some_and(|expected| expected != roots) { return Err("mismatching policy roots"); }
+        if shared_roots.is_none() { commitment.update(roots.0); commitment.update(roots.1); shared_roots = Some(roots); }
         let (lots, events) = match child {
             EpochChild::Leaf(_) => {
                 let events = word_u64(value, 9)?;
@@ -213,6 +224,8 @@ pub fn evaluate(input: &EpochInput) -> Result<EpochPublicValues, &'static str> {
         valid: true,
         leaf_vk_digest: input.leaf_vk_digest,
         aggregate_vk_digest: input.aggregate_vk_digest,
+        certificate_root: shared_roots.unwrap().0,
+        polygon_commitment: shared_roots.unwrap().1,
     })
 }
 
@@ -287,4 +300,23 @@ mod tests {
         };
         assert_eq!(evaluate(&too_many), Err("epoch fan-in must be 1..=8"));
     }
+    #[test]
+    fn roots_wire_version_and_child_kind_are_bound() {
+        let a = leaf(9, 0, 1, 1);
+        let mut b = leaf(9, 1, 2, 2);
+        b[128] = 1;
+        let mut input = EpochInput { leaf_vk_digest: [7;32], aggregate_vk_digest: [8;32], children: vec![EpochChild::Leaf(a), EpochChild::Leaf(b)] };
+        assert_eq!(evaluate(&input), Err("mismatching policy roots"));
+        input.children = vec![EpochChild::Leaf(a)];
+        let mut bytes = input.encode().unwrap(); bytes[0] = 1;
+        assert!(EpochInput::decode(&bytes).is_err());
+        bytes[0] = 2; bytes.push(0);
+        assert!(EpochInput::decode(&bytes).is_err());
+        input.children = vec![EpochChild::Aggregate(a)];
+        assert!(evaluate(&input).is_err());
+        let mut dirty = a; dirty[224] = 1;
+        input.children = vec![EpochChild::Leaf(dirty)];
+        assert!(evaluate(&input).is_err());
+    }
+
 }

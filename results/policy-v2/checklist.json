@@ -1,0 +1,297 @@
+{
+  "protocolVersion": 2,
+  "asOf": "2026-10-05",
+  "evidenceClass": "readiness-only",
+  "formalComplete": false,
+  "formalMeasuredRuns": 0,
+  "finaltrue": false,
+  "authorInformationComplete": false,
+  "source": {
+    "baseRevision": "c365bc982fb1bd0b728be3e2d33fd872e28cf9aa",
+    "status": "working-tree implementation; final clean source identity pending",
+    "authoritativeTasks": "EPCIS_ACIIDS_2026_ThinhTriNhan/todo-list.tex",
+    "approvedPlan": "docs/superpowers/plans/2026-10-05-policy-v2-hpc-readiness.md"
+  },
+  "validationBoundary": "Local tests, source review and bounded eight-event mapper-to-guest execute only. Latest recorded execute matched host/guest ABI without generating a proof. No new v2 proof, formal measurement, Sepolia broadcast or submission claim; final clean source identity remains pending.",
+  "tasks": [
+    {
+      "id": "T-SEC-01",
+      "title": "Registry binding of RC and cG (condition B1)",
+      "status": "locally-verified-awaiting-hpc",
+      "evidenceClass": "local-code-validation",
+      "formalComplete": false,
+      "sourcePaths": [
+        "crates/sp1-e2e/policy/src/epoch.rs",
+        "contracts/PolicyRegistry.sol",
+        "contracts/EpochAggregateAnchor.sol",
+        "contracts/test/anvil_policy_v2_test.mjs"
+      ],
+      "implemented": "Same root pair is bound through typed children and Gamma; registry is owner-controlled; all proof anchors reject unapproved roots.",
+      "remaining": "Final clean source identity, real v2 aggregate Groth16 gate and HPC receipts."
+    },
+    {
+      "id": "T-SEC-02",
+      "title": "Hiding (salted) commitments (condition B3)",
+      "status": "locally-verified-awaiting-hpc",
+      "evidenceClass": "local-code-validation",
+      "formalComplete": false,
+      "sourcePaths": [
+        "crates/sp1-e2e/policy/src/lib.rs",
+        "crates/disclosure/tests/openings.rs"
+      ],
+      "implemented": "Salted polygon commitment and per-event salted Merkle commitment/openings are implemented.",
+      "remaining": "Final clean source identity, real proof integration and measured disclosure views."
+    },
+    {
+      "id": "T-SEC-03",
+      "title": "Key-bound nullifier and wider index (condition B2)",
+      "status": "locally-verified-awaiting-hpc",
+      "evidenceClass": "local-code-validation",
+      "formalComplete": false,
+      "sourcePaths": [
+        "crates/sp1-e2e/policy/src/lib.rs",
+        "crates/sp1-e2e/policy/src/registry.rs"
+      ],
+      "implemented": "Issuer binds lot/owner/key commitment; nullifier is key-derived with a full 256-bit sparse index.",
+      "remaining": "Final clean source identity and real HPC proof/receipt validation; maintain Path B semantic distinction."
+    },
+    {
+      "id": "T-DM-01",
+      "title": "EPCIS 2.0 JSON-LD to EpcisEventV1 mapper",
+      "status": "locally-verified-awaiting-hpc",
+      "evidenceClass": "local-code-validation",
+      "formalComplete": false,
+      "sourcePaths": [
+        "crates/epcis-mapper/README.md",
+        "crates/sp1-e2e/script/src/bin/mapper_flow.rs"
+      ],
+      "implemented": "Strict ObjectEvent subset with canonical 86-byte encoding, collision catalog and explicit signer context. Latest bounded eight-event mapper-to-host-to-guest execution matched the public ABI.",
+      "remaining": "Real proof integration; full JSON-LD and Aggregation/Transformation lot graph remain out of scope."
+    },
+    {
+      "id": "T-SD-01",
+      "title": "Selective-disclosure view prototype",
+      "status": "prototype-verified-measurements-pending",
+      "evidenceClass": "local-code-validation",
+      "formalComplete": false,
+      "sourcePaths": [
+        "crates/disclosure/README.md",
+        "crates/disclosure/tests/openings.rs",
+        "crates/disclosure/tests/rpc_binding.rs",
+        "crates/sp1-e2e/script/src/aggregation_archive.rs"
+      ],
+      "implemented": "Three presets and actual CLI fixture tests validate openings, ordered public auth paths and external chain/anchor trust.",
+      "remaining": "Real archived proof tree and receipt, 30 repetitions per view, bundle bytes and measured verify time."
+    },
+    {
+      "id": "T-C1-01",
+      "title": "Plot-polygon and multi-polygon geofence",
+      "status": "future-work",
+      "evidenceClass": "deferred",
+      "formalComplete": false,
+      "sourcePaths": [
+        "crates/sp1-e2e/policy/src/lib.rs"
+      ],
+      "implemented": "Current C1 checks a point against one committed forbidden polygon.",
+      "remaining": "Plot disjointness, all forest-loss polygons and tile completeness; physical lot continuity stays future work."
+    },
+    {
+      "id": "T-E2-01",
+      "title": "3-Raft Fabric topology and host record",
+      "status": "implemented-awaiting-hpc",
+      "evidenceClass": "source-reviewed",
+      "formalComplete": false,
+      "sourcePaths": [
+        "infra/fabric/raft/compose.yaml",
+        "scripts/e4_preflight.py",
+        "scripts/e2_stack.sh",
+        "scripts/e2_preflight.py"
+      ],
+      "implemented": "Allocation-owned topology lifecycle and hardware/software metadata checks exist.",
+      "remaining": "Actual allocation, GPU/driver/CUDA/OS/images/toolchain record and observed 2-org/2-peer/3-orderer preflight."
+    },
+    {
+      "id": "T-E3-01",
+      "title": "Recursive epoch gate (aggregate proof to Anvil receipt)",
+      "status": "implemented-awaiting-hpc",
+      "evidenceClass": "source-reviewed",
+      "formalComplete": false,
+      "sourcePaths": [
+        "crates/sp1-e2e/script/src/bin/e3_epoch_gate.rs",
+        "contracts/test/anvil_e3_smoke.mjs",
+        "scripts/e3_gate_manifest.py"
+      ],
+      "implemented": "Real verifier gate pipeline plus strict protocol/source/root/program/event/tamper metadata checks; contract stubs are excluded.",
+      "remaining": "New v2 compressed leaves, recursive Groth16 proof, successful Anvil receipt, tamper checks and gas/calldata."
+    },
+    {
+      "id": "T-E1-01",
+      "title": "Path B rerun at production FRI parameters",
+      "status": "implemented-awaiting-hpc",
+      "evidenceClass": "source-reviewed",
+      "formalComplete": false,
+      "sourcePaths": [
+        "crates/e1-bench/src/templates.rs",
+        "scripts/e1_plan.py",
+        "scripts/e1_analyze.py"
+      ],
+      "implemented": "FRI 3/33/16 and selectable credential depths are represented in source/plans/provenance.",
+      "remaining": "Fresh C1-C5 8/16/32/64 events x 30 seeds at credential depths 6 and 16; no reuse of archived measurements."
+    },
+    {
+      "id": "T-E1-02",
+      "title": "Path B recursive wrapper benchmark",
+      "status": "implemented-awaiting-hpc",
+      "evidenceClass": "source-reviewed",
+      "formalComplete": false,
+      "sourcePaths": [
+        "crates/e1-bench/src/runner.rs",
+        "scripts/e1_plan.py"
+      ],
+      "implemented": "Separate recursive-wrapper campaign is planned with true circuit labels.",
+      "remaining": "At least n=8/64 x 10 seeds, prove/verify times, postcard proof bytes and peak RSS."
+    },
+    {
+      "id": "T-E1-03",
+      "title": "SP1 leaf cost, CPU vs GPU A/B",
+      "status": "implemented-awaiting-hpc",
+      "evidenceClass": "source-reviewed",
+      "formalComplete": false,
+      "sourcePaths": [
+        "scripts/e4_preflight.py",
+        "crates/sp1-e2e/script/src/bin/e3_epoch_gate.rs"
+      ],
+      "implemented": "Preflight defines n=8/64, CPU/CUDA, five repetitions and paired workloads on one host.",
+      "remaining": "Measured compressed/Groth16 timings, proof sizes and GPU speedup for final program keys."
+    },
+    {
+      "id": "T-E2-02",
+      "title": "Full RQ2 latency benchmark",
+      "status": "implemented-awaiting-hpc",
+      "evidenceClass": "source-reviewed",
+      "formalComplete": false,
+      "sourcePaths": [
+        "crates/sp1-e2e/script/src/bin/e2_real_benchmark.rs",
+        "scripts/e2_real_analyze.py"
+      ],
+      "implemented": "Paced real runner records queue accounting, source, workload/manifest identity and proof receipts.",
+      "remaining": "480 events/min x60 min x30 seeds; preserve saturation/censoring, tail latency, seed CI and any separately measured sustainable load."
+    },
+    {
+      "id": "T-E3-02",
+      "title": "RQ3: 4 modes x30 seeds",
+      "status": "implemented-awaiting-hpc",
+      "evidenceClass": "source-reviewed",
+      "formalComplete": false,
+      "sourcePaths": [
+        "scripts/e3_plan.py",
+        "scripts/e3_campaign.py",
+        "scripts/e3_run.py",
+        "scripts/e3_analyze.py"
+      ],
+      "implemented": "120 paired cells with counterbalanced mode order and fresh-ledger isolation; partial reports cannot produce formal p-values.",
+      "remaining": "120 successful real cells or honest partial status; median/IQR, Wilcoxon/Bonferroni and effect sizes; VeCroToken remains adapted."
+    },
+    {
+      "id": "T-E4-01",
+      "title": "RQ4 screening (80 runs)",
+      "status": "implemented-awaiting-hpc",
+      "evidenceClass": "source-reviewed",
+      "formalComplete": false,
+      "sourcePaths": [
+        "scripts/e4_plan.py",
+        "scripts/e4_run.py",
+        "scripts/e4_merge.py"
+      ],
+      "implemented": "80-cell screening plan and same-host gate/preflight/manifest validation exist.",
+      "remaining": "Run all80 screening cells; preserve actual offered workload, four completed epochs, saturation/censoring and receipts."
+    },
+    {
+      "id": "T-E4-02",
+      "title": "RQ4 confirmation (270 runs) and Figure2",
+      "status": "implemented-awaiting-hpc",
+      "evidenceClass": "source-reviewed",
+      "formalComplete": false,
+      "sourcePaths": [
+        "scripts/e4_plan.py",
+        "scripts/e4_analyze.py"
+      ],
+      "implemented": "270 confirmation runs and strict analysis coverage are represented in source.",
+      "remaining": "Real confirmation results and Figure2 median/IQR throughput/completion/gas/calldata; no synthetic paper figure."
+    },
+    {
+      "id": "T-COST-01",
+      "title": "Gas to fiat conversion",
+      "status": "prototype-verified-measurements-pending",
+      "evidenceClass": "local-code-validation",
+      "formalComplete": false,
+      "sourcePaths": [
+        "scripts/gas_cost.py",
+        "scripts/test_gas_cost.py"
+      ],
+      "implemented": "Decimal sensitivity calculator requires explicit dated gas/ETH assumptions and labels estimates.",
+      "remaining": "Insert real measured receipt gas plus contemporaneous cited assumptions; Anvil gas is not a paid mainnet fee."
+    },
+    {
+      "id": "T-SEP-01",
+      "title": "Optional public-testnet run",
+      "status": "optional-not-run",
+      "evidenceClass": "pending",
+      "formalComplete": false,
+      "sourcePaths": [
+        "contracts/test/sepolia_deploy.mjs",
+        "contracts/test/five_epoch_smoke.mjs"
+      ],
+      "implemented": "Sepolia deployment defaults to no-RPC/no-key dry-run; five-epoch script requires existing real fixtures.",
+      "remaining": "Explicit authorized deployment, five real epochs and measured inclusion delays; otherwise retain Anvil-only limitation."
+    },
+    {
+      "id": "T-ABS-01",
+      "title": "Headline numbers in the abstract and conclusion",
+      "status": "pending-measurements",
+      "evidenceClass": "pending",
+      "formalComplete": false,
+      "sourcePaths": [
+        "EPCIS_ACIIDS_2026_ThinhTriNhan/todo-list.tex"
+      ],
+      "implemented": "Headline measurement slots remain pending.",
+      "remaining": "Use only accepted E2/E3 raw/metadata/analyzer results; latency/gas ratios remain N/A."
+    },
+    {
+      "id": "T-DOC-01",
+      "title": "Authors ORCIDs, funding and acknowledgement",
+      "status": "pending-author-information",
+      "evidenceClass": "pending",
+      "formalComplete": false,
+      "sourcePaths": [
+        "EPCIS_ACIIDS_2026_ThinhTriNhan/todo-list.tex"
+      ],
+      "implemented": "Author-provided ORCID/funding information is not supplied by code checks.",
+      "remaining": "Receive and verify each author ORCID, funding/grant and acknowledgement wording."
+    },
+    {
+      "id": "T-FIN-01",
+      "title": "Final gate before EasyChair",
+      "status": "pending-finalization",
+      "evidenceClass": "pending",
+      "formalComplete": false,
+      "sourcePaths": [
+        "EPCIS_ACIIDS_2026_ThinhTriNhan/todo-list.tex"
+      ],
+      "implemented": "Current readiness checker protects20 IDs and keeps finaltrue disabled.",
+      "remaining": "Formal evidence ledger, author details, complete placeholders, <=15-page/overfull review, explicit final review and submission tag."
+    }
+  ],
+  "localExecute": {
+    "evidenceClass": "local-code-validation",
+    "events": 8,
+    "hostGuestAbiMatched": true,
+    "proofGenerated": false,
+    "cycles": null,
+    "cycleLimit": 50000000,
+    "watchdogReport": "/tmp/eudr-v2-final-guest-20261005.json",
+    "elapsedSeconds": 3.1739222920732573,
+    "peakRssBytes": 77709312,
+    "sourceBoundary": "Current working-tree smoke; not a clean committed formal measurement."
+  }
+}

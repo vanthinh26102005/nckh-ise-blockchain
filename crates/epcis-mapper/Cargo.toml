@@ -1,0 +1,16 @@
+[package]
+name = "epcis-mapper"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Keep host ingestion independent of the SP1 SDK/program build.
+[workspace]
+
+[dependencies]
+eudr-policy = { path = "../sp1-e2e/policy" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+sha2 = "0.10"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+ed25519-dalek = { version = "3.0.0", default-features = false }

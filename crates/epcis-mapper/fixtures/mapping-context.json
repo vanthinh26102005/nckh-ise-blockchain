@@ -1,0 +1,7 @@
+{
+  "epoch_id": 1,
+  "actor_public_key": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+  "certificate_id": 42,
+  "role": 4,
+  "kpi": {"sensor_type": "Temperature", "unit": "CEL", "scale": 100}
+}
