@@ -1,0 +1,42 @@
+{
+  "protocolVersion": 2,
+  "validationKind": "local-code-and-guest-execute",
+  "formal": false,
+  "proofGenerated": false,
+  "sourceIdentity": "working-tree source hashes; not formal committed-binary provenance",
+  "sourceSHA256": {
+    "crates/sp1-e2e/policy/src/lib.rs": "092b73308ef82dedba091bc0e8dedf2f16bde168149af5fe048ea35ffaa053d5",
+    "crates/sp1-e2e/policy/src/registry.rs": "eea0eacc0d41410fac99c7e0b0ce95bf5600af66f635c5fbd34233eb785a8147",
+    "crates/sp1-e2e/policy/src/epoch.rs": "851836f04dcbaed867d453e5bc932b75131dbf2fa0eb492be2b660290f411f14",
+    "crates/sp1-e2e/program/src/main.rs": "2844c6ccd92562c2ecaf9a95a6cbaeda6ccbf236e2a89ab75d31c33e1b81daaa",
+    "crates/sp1-e2e/epoch-program/src/main.rs": "bb2396ba46ac97fbea78eb3019ff00a912c1852d4932949513c43430cecd1000",
+    "crates/sp1-e2e/script/src/bin/local_execute.rs": "86ec9c58de3ccb1edaa4b9646ab741464c63bddc89c3f0e393acab76abd6c6b9",
+    "crates/sp1-e2e/script/src/bin/mapper_flow.rs": "efa13150de46f313f42766c19fd143bc7d9878fa2706243595c653e308b7b3e6",
+    "crates/epcis-mapper/src/lib.rs": "c0f8909f5e63a023f3c0d71ef0d872a3dbb0c9d0898a27e641672ea4463f93e5"
+  },
+  "localCheck": {
+    "command": "make local-check",
+    "status": "passed",
+    "rustPassed": 54,
+    "proofTestsIgnored": 24,
+    "pythonPassed": 60,
+    "solidityCompileAndMetadataTests": "passed"
+  },
+  "guest": {
+    "command": "mapper_flow -> local_watchdog.py -> local_execute",
+    "events": 8,
+    "publicValuesMatchHost": true,
+    "instructionCount": null,
+    "cycleLimit": 50000000,
+    "rssLimitBytes": 4294967296,
+    "swapGrowthLimitBytes": 536870912,
+    "validationKind": "local-resource-budget",
+    "status": "passed",
+    "reason": null,
+    "exitCode": 0,
+    "peakRssBytes": 77709312,
+    "elapsedSeconds": 3.1739222920732573
+  },
+  "proofIntegration": "awaiting HPC validation",
+  "paperPDF": "not built; Tectonic initial format downloads interrupted after roughly five minutes; no TeX Live found"
+}

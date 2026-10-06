@@ -4,8 +4,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, ValueEnum};
 use eudr_policy::{epoch::EPOCH_PUBLIC_BYTES, evaluate, nullifier_index, SparseNullifierMap};
 use serde_json::json;
+use sha2::{Digest,Sha256};
 use sp1_e2e::{
-    benchmark_events_for_lot, benchmark_nullifier_secret, http::FabricGateway,
+    benchmark_registry, benchmark_owner, benchmark_batch_nonce, benchmark_events_for_lot, benchmark_nullifier_key, http::FabricGateway,
     policy_input_from_events, prove_epoch_with, prove_policy_compressed_with, setup_epoch_prover,
     setup_policy_prover,
 };
@@ -34,6 +35,9 @@ struct Cli {
     /// Reuse the exact Fabric events committed by the matching CPU preflight.
     #[arg(long, default_value_t = false)]
     reuse_fabric_evidence: bool,
+    /// Write trusted public policy configuration before proving/deployment.
+    #[arg(long)]
+    prepare_only: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -44,6 +48,10 @@ enum ProverKind {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if cli.out.exists() { bail!("output already exists"); }
+    if cli.prepare_only {
+        return match cli.prover { ProverKind::Cpu=>prepare(&cli,&ProverClient::builder().cpu().build()),ProverKind::Cuda=>prepare_cuda(&cli) };
+    }
     match cli.prover {
         ProverKind::Cpu => run(cli, ProverClient::builder().cpu().build()),
         ProverKind::Cuda => run_cuda(cli),
@@ -71,37 +79,31 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
             .expect("system clock")
             .as_secs()
     });
+    let setup_started = Instant::now();
     let leaf_key = setup_policy_prover(&client).map_err(|error| anyhow!(error))?;
     let epoch_key = setup_epoch_prover(&client).map_err(|error| anyhow!(error))?;
+    let setup_ms=setup_started.elapsed().as_secs_f64()*1000.0;
     let mut nullifiers = SparseNullifierMap::default();
     let initial_root = nullifiers.root();
     let mut proofs = Vec::new();
     let mut leaf_ms = Vec::new();
+    let mut witness_ms=Vec::new();let mut leaf_serialized_bytes=Vec::new();
+    let registry_started=Instant::now();
 
-    for offset in 0..2_u64 {
-        let lot_id = epoch_id
-            .checked_mul(2)
-            .and_then(|id| id.checked_add(offset))
-            .context("epoch ID too large for unique lot IDs")?;
-        let first_event_id = epoch_id
-            .checked_mul(128)
-            .and_then(|id| id.checked_add(offset * cli.events_per_leaf as u64))
-            .context("epoch ID too large for unique event IDs")?;
-        let events = benchmark_events_for_lot(
-            epoch_id,
-            epoch_id,
-            lot_id,
-            first_event_id,
-            cli.events_per_leaf,
-        )
-        .map_err(|error| anyhow!(error))?;
+    let planned = planned_events(epoch_id,cli.events_per_leaf)?;
+    let all_events: Vec<_> = planned.iter().flat_map(|(_,events)|events.clone()).collect();
+    let registry = benchmark_registry(epoch_id,&all_events).map_err(|e|anyhow!(e))?;
+    sp1_e2e::require_registry_configuration(&registry,&leaf_key.verifying_key().bytes32(),&epoch_key.verifying_key().bytes32(),leaf_key.verifying_key().hash_bytes(),epoch_key.verifying_key().hash_bytes()).map_err(|e|anyhow!(e))?;
+    let registry_ms=registry_started.elapsed().as_secs_f64()*1000.0;
+    for (lot_id,events) in planned {
         for witness in &events {
             if !cli.reuse_fabric_evidence {
                 gateway.post_event(&witness.event_bytes)?;
             }
             gateway.assert_event_was_committed(&witness.event_bytes)?;
         }
-        let secret = benchmark_nullifier_secret(epoch_id, lot_id);
+        let witness_started=Instant::now();
+        let secret = benchmark_nullifier_key(epoch_id, lot_id);
         let index = nullifier_index(lot_id, secret);
         let input = policy_input_from_events(
             epoch_id,
@@ -112,13 +114,16 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
             nullifiers
                 .empty_path(index)
                 .map_err(|error| anyhow!("C5 path: {error:?}"))?,
+            &registry,benchmark_owner(epoch_id),benchmark_batch_nonce(epoch_id,lot_id),
         )
         .map_err(|error| anyhow!(error))?;
         let expected = evaluate(&input).map_err(|error| anyhow!("policy: {error:?}"))?;
+        witness_ms.push(witness_started.elapsed().as_secs_f64()*1000.0);
         let started = Instant::now();
         let proof = prove_policy_compressed_with(&client, &leaf_key, &input)
             .map_err(|error| anyhow!(error))?;
         leaf_ms.push(started.elapsed().as_millis());
+        leaf_serialized_bytes.push(serde_json::to_vec(&proof)?.len());
         nullifiers
             .insert(index)
             .map_err(|error| anyhow!("C5 insert: {error:?}"))?;
@@ -147,11 +152,16 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
         .public_values
         .as_slice()
         .try_into()
-        .map_err(|_| anyhow!("epoch public values are not 288 bytes"))?;
+        .map_err(|_| anyhow!("epoch public values are not 352 bytes"))?;
     if values[64..96] != nullifiers.root() {
         bail!("aggregate proof output disagrees with host nullifier map");
     }
     let fixture = json!({
+        "protocolVersion": 2, "sourceRevision":sp1_e2e::source_revision(), "verificationKind": "sp1-groth16",
+        "certificateRoot": format!("0x{}",hex::encode(registry.root())),
+        "polygonCommitment": format!("0x{}",hex::encode(eudr_policy::polygon_commitment(&registry.polygon,registry.polygon_nonce))),
+        "workloadDigest": format!("0x{}",hex::encode(Sha256::digest(all_events.iter().flat_map(|w|w.event_bytes).collect::<Vec<_>>()))),
+        "syntheticFixture": true, "credentialDepth": 16, "nullifierDepth": 256,
         "vkey": epoch_key.verifying_key().bytes32(),
         "leafVKeyDigest": format!("0x{}", hex::encode(leaf_key.verifying_key().hash_bytes())),
         "aggregateVKeyDigest": format!("0x{}", hex::encode(epoch_key.verifying_key().hash_bytes())),
@@ -163,6 +173,10 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
         "fabricEventsAcknowledged": 2 * cli.events_per_leaf,
         "tamperedChildRejected": true,
         "leafCompressedProofMs": leaf_ms,
+        "setupMs":setup_ms,"registryAndWorkloadMs":registry_ms,"witnessMs":witness_ms,
+        "leafSerializedProofBytes":leaf_serialized_bytes,"aggregateProofBytes":epoch_proof.bytes().len(),
+        "aggregateCompressedProofMs":null,"groth16WrappingMs":null,"peakRssBytes":null,
+        "phaseBoundary":"aggregateGroth16ProofMs combines recursive proving and SDK Groth16 wrapping; unavailable phase/RSS metrics are null",
         "aggregateGroth16ProofMs": aggregate_ms,
         "prover": match cli.prover { ProverKind::Cpu => "cpu", ProverKind::Cuda => "cuda" },
     });
@@ -174,3 +188,51 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
     println!("E3 proof fixture: {}", cli.out.display());
     Ok(())
 }
+
+fn planned_events(epoch_id:u64,event_count:usize) -> Result<Vec<(u64,Vec<eudr_policy::EventWitness>)>> {
+    if ![8,64].contains(&event_count) { bail!("event count must be8/64"); }
+    let mut planned = Vec::new();
+    for offset in 0..2_u64 {
+        let lot_id = epoch_id
+            .checked_mul(2)
+            .and_then(|id| id.checked_add(offset))
+            .context("epoch ID too large for unique lot IDs")?;
+        let first_event_id = epoch_id
+            .checked_mul(128)
+            .and_then(|id| id.checked_add(offset * event_count as u64))
+            .context("epoch ID too large for unique event IDs")?;
+        let events = benchmark_events_for_lot(
+            epoch_id,
+            epoch_id,
+            lot_id,
+            first_event_id,
+            event_count,
+        )
+        .map_err(|error| anyhow!(error))?;
+        planned.push((lot_id,events));
+    }
+    Ok(planned)
+}
+
+fn prepare<P:Prover>(cli:&Cli,client:&P) -> Result<()> {
+    let epoch=cli.epoch_id.context("--prepare-only requires --epoch-id")?;
+    let planned=planned_events(epoch,cli.events_per_leaf)?;
+    let all:Vec<_>=planned.iter().flat_map(|(_,e)|e.clone()).collect();
+    let registry=benchmark_registry(epoch,&all).map_err(|e|anyhow!(e))?;
+    let leaf_key=setup_policy_prover(client).map_err(|e|anyhow!(e))?;
+    let epoch_key=setup_epoch_prover(client).map_err(|e|anyhow!(e))?;
+    let output=json!({"leafProgramVKey":leaf_key.verifying_key().bytes32(),"aggregateProgramVKey":epoch_key.verifying_key().bytes32(),
+        "leafVKeyDigest":format!("0x{}",hex::encode(leaf_key.verifying_key().hash_bytes())),
+        "aggregateVKeyDigest":format!("0x{}",hex::encode(epoch_key.verifying_key().hash_bytes())),
+        "protocolVersion":2,"sourceRevision":sp1_e2e::source_revision(),"validationKind":"synthetic-policy-configuration",
+        "syntheticFixture":true,"seed":epoch,"credentialDepth":16,"nullifierDepth":256,
+        "certificateRoot":format!("0x{}",hex::encode(registry.root())),
+        "polygonCommitment":format!("0x{}",hex::encode(eudr_policy::polygon_commitment(&registry.polygon,registry.polygon_nonce))),
+        "workloadDigest":format!("0x{}",hex::encode(Sha256::digest(all.iter().flat_map(|w|w.event_bytes).collect::<Vec<_>>()))) });
+    fs::write(&cli.out,serde_json::to_vec_pretty(&output)?)?; Ok(())
+}
+
+#[cfg(feature="cuda")]
+fn prepare_cuda(cli:&Cli)->Result<()> { prepare(cli,&ProverClient::builder().cuda().build()) }
+#[cfg(not(feature="cuda"))]
+fn prepare_cuda(_: &Cli)->Result<()> { bail!("CUDA configuration requires --features cuda") }

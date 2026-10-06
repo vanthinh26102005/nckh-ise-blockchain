@@ -6,9 +6,9 @@ use eudr_policy::{evaluate, nullifier_index, SparseNullifierMap};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sp1_e2e::{
-    benchmark_events_for_lot, benchmark_nullifier_secret,
+    benchmark_registry, benchmark_owner, benchmark_batch_nonce, benchmark_events_for_lot, benchmark_nullifier_key,
     http::{FabricGateway, HttpEndpoint},
-    policy_input_from_events, prove_epoch_tree_with, prove_policy_compressed_with, prove_with,
+    policy_input_from_events, prove_policy_compressed_with, prove_with,
     setup_epoch_prover, setup_policy_prover, EventWitness,
 };
 use sp1_sdk::{
@@ -18,7 +18,7 @@ use sp1_sdk::{
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc, Arc,
     },
     thread,
@@ -47,6 +47,8 @@ struct Cli {
     prover: ProverKind,
     #[arg(long, value_enum, default_value_t = Mode::Proposed)]
     mode: Mode,
+    #[arg(long)]
+    prepare_policy_manifest: Option<std::path::PathBuf>,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -89,7 +91,7 @@ fn main() -> Result<()> {
     {
         bail!("invalid E4 cell axes");
     }
-    if matches!(cli.mode, Mode::FabricOnly | Mode::HashOnChain) {
+    if cli.prepare_policy_manifest.is_none() && matches!(cli.mode, Mode::FabricOnly | Mode::HashOnChain) {
         return run_baseline(cli);
     }
     match cli.prover {
@@ -108,10 +110,24 @@ fn run_cuda(_: Cli) -> Result<()> {
 }
 
 fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
+    let tasks = schedule(&cli)?;
+    let all_events: Vec<_> = tasks.iter().flatten().flat_map(|task|task.events.clone()).collect();
+    let registry = benchmark_registry(cli.seed,&all_events).map_err(|e|anyhow!(e))?;
+    let workload_digest = bytes32_slice(&Sha256::digest(all_events.iter().flat_map(|w| w.event_bytes).collect::<Vec<_>>()));
     let fabric = FabricGateway::from_url(&cli.fabric_gateway)?;
     let anchor = HttpEndpoint::from_url(&cli.anchor_server)?;
     let leaf_key = setup_policy_prover(&client).map_err(|error| anyhow!(error))?;
     let epoch_key = setup_epoch_prover(&client).map_err(|error| anyhow!(error))?;
+    if let Some(path)=&cli.prepare_policy_manifest {
+        if path.exists() { bail!("policy manifest output exists"); }
+        let value=json!({"protocolVersion":2,"sourceRevision":sp1_e2e::source_revision(),"syntheticFixture":true,"seed":cli.seed,
+            "certificateRoot":bytes32(registry.root()),"polygonCommitment":bytes32(eudr_policy::polygon_commitment(&registry.polygon,registry.polygon_nonce)),
+            "leafProgramVKey":leaf_key.verifying_key().bytes32(),"aggregateProgramVKey":epoch_key.verifying_key().bytes32(),
+            "leafVKeyDigest":bytes32(leaf_key.verifying_key().hash_bytes()),"aggregateVKeyDigest":bytes32(epoch_key.verifying_key().hash_bytes()),
+            "workloadDigest":workload_digest,"workloads":[{"seed":cli.seed,"np":cli.np,"shipment":cli.shipment,"epoch_s":cli.epoch_s,"epochs":cli.epochs,"offeredEvents":all_events.len(),"offeredShipments":tasks.iter().flatten().filter(|t|t.shipment_end).count(),"digest":workload_digest}],"credentialDepth":16,"nullifierDepth":256});
+        std::fs::write(path,serde_json::to_vec_pretty(&value)?)?;return Ok(());
+    }
+    sp1_e2e::require_registry_configuration(&registry,&leaf_key.verifying_key().bytes32(),&epoch_key.verifying_key().bytes32(),leaf_key.verifying_key().hash_bytes(),epoch_key.verifying_key().hash_bytes()).map_err(|e|anyhow!(e))?;
     let mut nullifiers = SparseNullifierMap::default();
     let initial_root = bytes32(nullifiers.root());
     let vkey = epoch_key.verifying_key().bytes32();
@@ -134,7 +150,6 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
     if response.status != 201 {
         bail!("Anvil E3 reset failed: {}", response.body);
     }
-    let tasks = schedule(&cli)?;
     let started = Instant::now();
     let deadline = cli
         .wall_time_s
@@ -150,11 +165,14 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
         .filter(|leaf| leaf.shipment_end)
         .count();
     let stop = Arc::new(AtomicBool::new(false));
-    let (sender, receiver) = mpsc::channel();
+    let (sender, receiver) = mpsc::sync_channel(32);
     let producer_stop = stop.clone();
     let producer =
         thread::spawn(move || produce(tasks, fabric, sender, started, deadline, producer_stop));
 
+    let archive=std::env::var("EUDR_PRIVATE_ARCHIVE").ok().map(std::path::PathBuf::from);
+    if let Some(path)=&archive { if !path.is_absolute() || path.starts_with(std::env::current_dir()?) || path.exists() {bail!("private archive must be a fresh absolute directory outside workspace");} std::fs::create_dir_all(path)?; }
+    let mut archive_lots=Vec::new();
     let mut leaves: Vec<SP1ProofWithPublicValues> = Vec::new();
     let mut acknowledged: Vec<(Instant, usize)> = Vec::new();
     let mut leaf_ms = Vec::new();
@@ -170,7 +188,7 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
     let mut reason = None;
     let mut saturated = false;
 
-    for message in receiver {
+    for message in receiver.iter() {
         if deadline.is_some_and(|end| Instant::now() >= end) {
             saturated = true;
             stop.store(true, Ordering::Relaxed);
@@ -178,7 +196,7 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
         }
         let step: Result<()> = match message {
             Message::Leaf(task) => (|| {
-                let secret = benchmark_nullifier_secret(cli.seed, task.lot_id);
+                let secret = benchmark_nullifier_key(cli.seed, task.lot_id);
                 let index = nullifier_index(task.lot_id, secret);
                 let input = policy_input_from_events(
                     task.epoch_id,
@@ -189,8 +207,13 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
                     nullifiers
                         .empty_path(index)
                         .map_err(|error| anyhow!("C5 path: {error:?}"))?,
+                    &registry,benchmark_owner(cli.seed),benchmark_batch_nonce(cli.seed,task.lot_id),
                 )
                 .map_err(|error| anyhow!(error))?;
+                if let Some(root)=&archive {
+                    sp1_e2e::write_private_archive(&root.join(format!("lot-{}.bin",task.lot_id)),&input.encode().map_err(|e|anyhow!("input:{e:?}"))?).map_err(|e|anyhow!(e))?;
+                    archive_lots.push(task.lot_id);
+                }
                 let expected = evaluate(&input).map_err(|error| anyhow!("policy: {error:?}"))?;
                 let proof_started = Instant::now();
                 let proof = if cli.mode == Mode::VecroAdapted {
@@ -262,7 +285,7 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
                 }
                 let old_root = leaves[0].public_values.as_slice()[32..64].to_vec();
                 let proof_started = Instant::now();
-                let proof = prove_epoch_tree_with(
+                let (proof,mut public_paths) = sp1_e2e::aggregation_archive::prove_epoch_tree_with_archive(
                     &client,
                     &epoch_key,
                     &leaf_key,
@@ -284,6 +307,13 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
                 if receipt["newNullifierRoot"].as_str() != Some(bytes32(nullifiers.root()).as_str())
                 {
                     bail!("Anvil epoch root disagrees with SP1 proof");
+                }
+                if let Some(root)=&archive {
+                    if archive_lots.len()!=public_paths.len() {bail!("archive leaf cardinality mismatch");}
+                    for (lot,path) in archive_lots.drain(..).zip(public_paths.iter_mut()) {
+                        path["transactionHash"]=receipt["transactionHash"].clone();
+                        sp1_e2e::write_private_archive(&root.join(format!("lot-{lot}-authentication.json")),&serde_json::to_vec_pretty(path)?).map_err(|e|anyhow!(e))?;
+                    }
                 }
                 for (time, count) in acknowledged.drain(..) {
                     audit_ms.push(time.elapsed().as_millis() as f64);
@@ -314,6 +344,7 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
         }
     }
     stop.store(true, Ordering::Relaxed);
+    drop(receiver);
     let producer_result = producer
         .join()
         .map_err(|_| anyhow!("Fabric producer panicked"))?;
@@ -346,7 +377,13 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
             "gas_samples": gas,
             "calldata_samples": calldata,
             "transactions": transactions,
-            "host": std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_string()),
+            "host": sp1_e2e::compute_host().map_err(|e|anyhow!(e))?,
+        "protocolVersion": 2, "sourceRevision": sp1_e2e::source_revision(), "workload_digest": workload_digest,
+        "registryPair": {"certificateRoot": bytes32(registry.root()),"polygonCommitment": bytes32(eudr_policy::polygon_commitment(&registry.polygon,registry.polygon_nonce))},
+        "registryManifestSHA256":std::env::var("POLICY_MANIFEST").ok().and_then(|p|std::fs::read(p).ok()).map(|b|hex::encode(Sha256::digest(b))),
+        "verificationKind": "sp1-groth16", "syntheticFixture": true,
+        "certificateRoot": bytes32(registry.root()),
+        "polygonCommitment": bytes32(eudr_policy::polygon_commitment(&registry.polygon,registry.polygon_nonce)),
         "rng": "ChaCha20Rng seed from e2-bench workload",
         "fabricWorkers": FABRIC_WORKERS,
         "policyProgramVKey": leaf_key.verifying_key().bytes32(),
@@ -369,6 +406,7 @@ fn run_baseline(cli: Cli) -> Result<()> {
         None
     };
     let tasks = schedule(&cli)?;
+    let workload_digest = bytes32_slice(&Sha256::digest(tasks.iter().flatten().flat_map(|t|t.events.iter()).flat_map(|w|w.event_bytes).collect::<Vec<_>>()));
     let offered_events = tasks
         .iter()
         .flat_map(|epoch| epoch.iter())
@@ -384,7 +422,7 @@ fn run_baseline(cli: Cli) -> Result<()> {
         .wall_time_s
         .map(|seconds| started + Duration::from_secs(seconds));
     let stop = Arc::new(AtomicBool::new(false));
-    let (sender, receiver) = mpsc::channel();
+    let (sender, receiver) = mpsc::sync_channel(32);
     let producer_stop = stop.clone();
     let producer =
         thread::spawn(move || produce(tasks, fabric, sender, started, deadline, producer_stop));
@@ -400,7 +438,7 @@ fn run_baseline(cli: Cli) -> Result<()> {
     let mut transactions = Vec::new();
     let mut reason = None;
     let mut saturated = false;
-    for message in receiver {
+    for message in receiver.iter() {
         if deadline.is_some_and(|end| Instant::now() >= end) {
             saturated = true;
             stop.store(true, Ordering::Relaxed);
@@ -468,6 +506,7 @@ fn run_baseline(cli: Cli) -> Result<()> {
         }
     }
     stop.store(true, Ordering::Relaxed);
+    drop(receiver);
     let producer_result = producer
         .join()
         .map_err(|_| anyhow!("Fabric producer panicked"))?;
@@ -493,7 +532,10 @@ fn run_baseline(cli: Cli) -> Result<()> {
             "committed_shipments": committed_shipments,
             "leaf_samples": [], "aggregate_samples": [], "audit_samples": audit_ms,
             "gas_samples": gas, "calldata_samples": calldata, "transactions": transactions,
-            "host": std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_string()),
+            "host": sp1_e2e::compute_host().map_err(|e|anyhow!(e))?,
+            "protocolVersion": 2, "sourceRevision": sp1_e2e::source_revision(), "workload_digest": workload_digest,
+            "registryManifestSHA256":std::env::var("POLICY_MANIFEST").ok().and_then(|p|std::fs::read(p).ok()).map(|b|hex::encode(Sha256::digest(b))),
+            "verificationKind": if cli.mode==Mode::HashOnChain { "hash-on-chain" } else { "fabric-only" }, "syntheticFixture": true,
             "rng": "ChaCha20Rng seed from e2-bench workload",
             "fabricWorkers": FABRIC_WORKERS,
         })
@@ -501,10 +543,18 @@ fn run_baseline(cli: Cli) -> Result<()> {
     Ok(())
 }
 
+fn wait_for_window(index:usize,released:&AtomicUsize,stop:&AtomicBool,deadline:Option<Instant>)->bool {
+    while index>=released.load(Ordering::Relaxed)+64 {
+        if stop.load(Ordering::Relaxed)||deadline.is_some_and(|end|Instant::now()>=end) {stop.store(true,Ordering::Relaxed);return false;}
+        thread::sleep(Duration::from_millis(10));
+    }
+    true
+}
+
 fn produce(
     tasks: Vec<Vec<LeafTask>>,
     gateway: FabricGateway,
-    sender: mpsc::Sender<Message>,
+    sender: mpsc::SyncSender<Message>,
     started: Instant,
     deadline: Option<Instant>,
     stop: Arc<AtomicBool>,
@@ -524,14 +574,17 @@ fn produce(
     }
 
     let (result_sender, result_receiver) = mpsc::channel::<(usize, Result<LeafTask>)>();
+    let released = Arc::new(AtomicUsize::new(0));
     let handles = assignments
         .into_iter()
         .map(|assigned| {
             let gateway = gateway.clone();
             let result_sender = result_sender.clone();
             let stop = stop.clone();
+            let released = released.clone();
             thread::spawn(move || {
                 for (index, mut leaf) in assigned {
+                    if !wait_for_window(index,&released,&stop,deadline) {return;}
                     let result: Result<()> = (|| {
                         for (event, due_ms) in leaf.events.iter().zip(&leaf.due_ms) {
                             let due = started + Duration::from_millis(*due_ms);
@@ -539,6 +592,7 @@ fn produce(
                                 if stop.load(Ordering::Relaxed)
                                     || deadline.is_some_and(|end| Instant::now() >= end)
                                 {
+                                    stop.store(true,Ordering::Relaxed);
                                     return Ok(());
                                 }
                                 match due.checked_duration_since(Instant::now()) {
@@ -561,6 +615,7 @@ fn produce(
                     if stop.load(Ordering::Relaxed)
                         || deadline.is_some_and(|end| Instant::now() >= end)
                     {
+                        stop.store(true,Ordering::Relaxed);
                         return;
                     }
                     leaf.acknowledged_at = Some(Instant::now());
@@ -599,6 +654,7 @@ fn produce(
                 }
             }
             next += 1;
+            released.store(next,Ordering::Relaxed);
         }
         if stop.load(Ordering::Relaxed) {
             break;
@@ -626,12 +682,6 @@ fn schedule(cli: &Cli) -> Result<Vec<Vec<LeafTask>>> {
     let mut event_number = 0_u64;
     let mut leaf_number = 0_u64;
     let mut shipment_number = 0_u64;
-    let mode_number = match cli.mode {
-        Mode::Proposed => 0,
-        Mode::FabricOnly => 1,
-        Mode::HashOnChain => 2,
-        Mode::VecroAdapted => 3,
-    };
     for epoch_index in 0..cli.epochs {
         let start_ms = epoch_index * cli.epoch_s * 1000;
         let end_ms = start_ms + cli.epoch_s * 1000;
@@ -643,12 +693,12 @@ fn schedule(cli: &Cli) -> Result<Vec<Vec<LeafTask>>> {
         if due.len() < 8 {
             bail!("epoch {epoch_index} has fewer than eight offered events");
         }
-        let epoch_id = cli.seed * 1000 + mode_number * 200 + epoch_index;
+        let epoch_id = cli.seed * 1000 + epoch_index;
         let mut batches = Vec::new();
         let mut cursor = 0;
         for size in shipment_sizes(due.len(), cli.shipment) {
             let end = cursor + size;
-            let shipment_id = cli.seed * 100_000 + mode_number * 20_000 + shipment_number;
+            let shipment_id = cli.seed * 100_000 + shipment_number;
             let mut part = cursor;
             while part < end {
                 let remaining = end - part;
@@ -662,8 +712,8 @@ fn schedule(cli: &Cli) -> Result<Vec<Vec<LeafTask>>> {
                 if count < 8 {
                     bail!("shipment split produced a leaf smaller than eight events");
                 }
-                let lot_id = cli.seed * 100_000 + mode_number * 20_000 + leaf_number;
-                let first_event_id = cli.seed * 200_000 + mode_number * 40_000 + event_number;
+                let lot_id = cli.seed * 100_000 + leaf_number;
+                let first_event_id = cli.seed * 200_000 + event_number;
                 let events =
                     benchmark_events_for_lot(cli.seed, epoch_id, lot_id, first_event_id, count)
                         .map_err(|error| anyhow!(error))?;
@@ -721,6 +771,7 @@ mod tests {
             epochs: 1,
             seed: 17,
             wall_time_s: None,
+            prepare_policy_manifest: None,
             fabric_gateway: "http://127.0.0.1:8080".to_string(),
             anchor_server: "http://127.0.0.1:8546".to_string(),
             prover: ProverKind::Cpu,
@@ -741,7 +792,7 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(arrivals(first), arrivals(second));
-        assert_ne!(first[0].lot_id, second[0].lot_id);
+        assert_eq!(first[0].lot_id, second[0].lot_id);
         assert!(first
             .iter()
             .all(|leaf| (8..=64).contains(&leaf.events.len())));
@@ -762,4 +813,11 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn stalled_ordered_window_stops_on_deadline() {
+        let released=AtomicUsize::new(0);let stop=AtomicBool::new(false);let started=Instant::now();
+        assert!(!wait_for_window(64,&released,&stop,Some(started+Duration::from_millis(15))));
+        assert!(stop.load(Ordering::Relaxed));assert!(started.elapsed()<Duration::from_secs(1));
+    }
+
 }

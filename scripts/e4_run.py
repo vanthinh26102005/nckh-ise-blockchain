@@ -21,6 +21,8 @@ so runs are reproducible / resumable).
 """
 
 import argparse
+import hashlib
+import os
 import csv
 import json
 import math
@@ -30,6 +32,7 @@ import subprocess
 import statistics
 from pathlib import Path
 from urllib.parse import urlparse
+from e4_preflight import policy_manifest, validate_preflight, validate_receipt
 
 LAMBDA_EVENTS_PER_MIN = 3.84
 EPOCHS_TARGET = 4
@@ -243,6 +246,10 @@ class RealE3Executor:
             "split_host": self.split_host, "split_host_rtt_ms": None,
             "e3_manifest_ref": str(self.e3_manifest_ref),
             "host": measured.get("host"), "rng": measured.get("rng"),
+            "protocolVersion": measured.get("protocolVersion"), "verificationKind": measured.get("verificationKind"),
+            "workload_digest": measured.get("workload_digest"), "registryPair": measured.get("registryPair"),
+            "registryManifestSHA256": measured.get("registryManifestSHA256"),
+            "sourceRevision": measured.get("sourceRevision"),
         }
 
 
@@ -269,6 +276,12 @@ def build_manifest(phase, rows, executor, args):
     seeds_per_cell = int(rows[0]["seeds_per_cell"])
     return {
         "experiment": "E4",
+        "protocolVersion": 2 if executor.name == "real-e3" else None,
+        "verificationKind": "sp1-groth16" if executor.name == "real-e3" else "mock",
+        "registry_manifest_sha256": getattr(args, "registry_manifest_sha256", None),
+        "acceptedPolicies": getattr(args, "accepted_policies", None),
+        "trustedWorkloads": getattr(args,"trusted_workloads",None),
+        "hardware": args.preflight.get("hardware") if args.preflight else None,
         "phase": phase,
         "created_at": args.created_at,
         "command": args.command or "",
@@ -318,6 +331,7 @@ def main():
     parser.add_argument("--anchor-server", default="http://127.0.0.1:8546")
     parser.add_argument("--e3-gate-manifest", type=Path)
     parser.add_argument("--preflight-ab", type=Path)
+    parser.add_argument("--policy-manifest", type=Path)
     parser.add_argument("--created-at", default="1970-01-01T00:00:00Z",
                         help="ISO-8601 run timestamp (pass real time from the shell).")
     parser.add_argument("--command", default=None)
@@ -360,7 +374,18 @@ def main():
             parser.error("real E4 output already exists; use a new path to preserve earlier data")
         if not args.e3_gate_manifest or not args.e3_gate_manifest.is_file():
             parser.error("--e3-gate-manifest is required for real-e3")
+        if not args.policy_manifest:
+            parser.error("--policy-manifest is required for real-e3")
+        args.registry_manifest_sha256, args.accepted_policies = policy_manifest(args.policy_manifest)
+        args.trusted_workloads=json.loads(args.policy_manifest.read_bytes()).get("workloads",[])
+        for row in rows:
+            axes={key:int(row[key]) for key in ("seed","np","shipment","epoch_s")};axes["epochs"]=4
+            if len([workload for workload in args.trusted_workloads if all(workload.get(key)==value for key,value in axes.items())])!=1:
+                parser.error("trusted manifest must contain exactly one planned E4 workload for every selected cell")
+        os.environ["POLICY_MANIFEST"] = str(args.policy_manifest.resolve())
         args.gate = json.loads(args.e3_gate_manifest.read_text())
+        if args.gate.get("protocolVersion") != 2 or args.gate.get("verificationKind") != "sp1-groth16" or not args.gate.get("registry"):
+            parser.error("E4 gate requires policy-v2 real SP1 Groth16 registry evidence")
         if (args.gate.get("status") != "passed" or args.gate.get("anvilReceiptStatus") != 1
                 or not args.gate.get("transactionHash")):
             parser.error("E3 gate manifest must contain a passed Anvil receipt")
@@ -369,6 +394,12 @@ def main():
         if not args.preflight_ab or not args.preflight_ab.is_file():
             parser.error("--preflight-ab is required for real-e3")
         args.preflight = json.loads(args.preflight_ab.read_text())
+        try:
+            validate_preflight(args.preflight)
+        except ValueError as error:
+            parser.error(str(error))
+        if args.preflight.get("registry_manifest_sha256") != args.registry_manifest_sha256:
+            parser.error("E4 run and preflight must use the same trusted policy manifest")
         metrics = ("leaf8_cpu_ms", "leaf8_gpu_ms", "leaf64_cpu_ms", "leaf64_gpu_ms",
                    "aggregate2_cpu_ms", "aggregate2_gpu_ms")
         if any(type(args.preflight.get(metric)) not in (int, float)
@@ -401,6 +432,21 @@ def main():
     with args.out.open("x" if args.executor == "real-e3" else "w") as f:
         for i, row in enumerate(rows, 1):
             result = executor.run(row)
+            if executor.name == "real-e3":
+                axes={key:int(row[key]) for key in ("seed","np","shipment","epoch_s")};axes["epochs"]=4
+                result["trustedWorkload"]=next(workload for workload in args.trusted_workloads if all(workload.get(key)==value for key,value in axes.items()))
+                if result["status"]=="ok" and (result.get("sourceRevision")!=args.git_commit or result.get("registryManifestSHA256")!=args.registry_manifest_sha256
+                        or result.get("offered_events")!=result["trustedWorkload"].get("offeredEvents")
+                        or result.get("offered_shipments")!=result["trustedWorkload"].get("offeredShipments")
+                        or str(result.get("workload_digest","")).removeprefix("0x").lower()!=str(result["trustedWorkload"].get("digest","")).removeprefix("0x").lower()):
+                    result["status"]="censored";result["censor_reason"]="actual source/manifest/workload differs from prebuilt trusted configuration"
+            if executor.name == "real-e3" and result["status"] == "ok":
+                if result.get("protocolVersion") != 2 or result.get("verificationKind") != "sp1-groth16" or not result.get("workload_digest"):
+                    raise RuntimeError("successful real E4 requires policy-v2 proof and workload digest")
+                for receipt in result["transactions"]:
+                    validate_receipt(receipt)
+            if executor.name == "real-e3":
+                result["registry_manifest_sha256"] = args.registry_manifest_sha256
             record = {
                 "kind": "cell",
                 "run_id": row["run_id"],

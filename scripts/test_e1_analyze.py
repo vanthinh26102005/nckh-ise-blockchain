@@ -2,7 +2,7 @@ import unittest
 
 import pandas as pd
 
-from e1_analyze import BASE_CIRCUITS, STRICT_COLUMNS, validate_grid
+from e1_analyze_20260929 import BASE_CIRCUITS, STRICT_COLUMNS, validate_grid
 
 
 class GridValidationTests(unittest.TestCase):

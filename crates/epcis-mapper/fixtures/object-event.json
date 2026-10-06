@@ -1,0 +1,11 @@
+{
+  "@context": "https://ref.gs1.org/standards/epcis/2.0.0/epcis-context.jsonld",
+  "type": "ObjectEvent",
+  "eventID": "urn:uuid:00000000-0000-4000-8000-000000000001",
+  "eventTime": "2026-10-05T14:30:00.125+07:00",
+  "eventTimeZoneOffset": "+07:00",
+  "action": "OBSERVE",
+  "quantityList": [{"epcClass": "urn:epc:class:lgtin:0614141.112345.400", "quantity": 100, "uom": "KGM"}],
+  "readPoint": {"id": "geo:-10.123456,106.123456"},
+  "sensorElementList": [{"sensorReport": [{"type": "Temperature", "value": 8.25, "uom": "CEL"}]}]
+}

@@ -1,9 +1,45 @@
 pub mod http;
+pub mod aggregation_archive;
+
+pub fn source_revision() -> String { env!("EUDR_SOURCE_REVISION").to_string() }
+pub fn compute_host() -> Result<String,String> {
+    let output=std::process::Command::new("hostname").output().map_err(|e|e.to_string())?;
+    if !output.status.success() { return Err("cannot read compute hostname".into()); }
+    let host=String::from_utf8(output.stdout).map_err(|e|e.to_string())?.trim().to_string();
+    if host.is_empty() { return Err("compute hostname is empty".into()); }
+    Ok(host)
+}
+/// Trusted configuration is loaded before any measurement/proof request.
+pub fn require_registry_configuration(registry:&eudr_policy::registry::RegistrySnapshot,leaf_vkey:&str,epoch_vkey:&str,leaf_digest:[u8;32],epoch_digest:[u8;32]) -> Result<(),String> {
+    let path=std::env::var("POLICY_MANIFEST").map_err(|_|"POLICY_MANIFEST required")?;
+    let value:serde_json::Value=serde_json::from_slice(&std::fs::read(path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+    if value["protocolVersion"]!=2 { return Err("policy manifest must be v2".into()); }
+    let root=format!("0x{}",hex::encode(registry.root()));
+    let polygon=format!("0x{}",hex::encode(eudr_policy::polygon_commitment(&registry.polygon,registry.polygon_nonce)));
+    let pairs=value["acceptedPolicies"].as_array().cloned().unwrap_or_else(||vec![value.clone()]);
+    if !pairs.iter().any(|p|p["certificateRoot"].as_str().is_some_and(|v|v.eq_ignore_ascii_case(&root)) && p["polygonCommitment"].as_str().is_some_and(|v|v.eq_ignore_ascii_case(&polygon))) { return Err("workload policy roots absent from trusted manifest".into()); }
+    for (field,expected) in [("leafProgramVKey",leaf_vkey.to_string()),("aggregateProgramVKey",epoch_vkey.to_string()),("leafVKeyDigest",format!("0x{}",hex::encode(leaf_digest))),("aggregateVKeyDigest",format!("0x{}",hex::encode(epoch_digest)))] {
+        if !value[field].as_str().is_some_and(|v|v.eq_ignore_ascii_case(&expected)) { return Err(format!("trusted manifest {field} mismatch")); }
+    }
+    Ok(())
+}
+
+
+/// Production private key/nonces must use OS entropy; seeded helpers below are synthetic only.
+pub fn write_private_archive(path:&std::path::Path,bytes:&[u8])->Result<(),String> {
+    use std::io::Write;let mut options=std::fs::OpenOptions::new();options.write(true).create_new(true);
+    #[cfg(unix)] {use std::os::unix::fs::OpenOptionsExt;options.mode(0o600);}
+    options.open(path).and_then(|mut f|f.write_all(bytes)).map_err(|e|e.to_string())
+}
+pub fn random_private_bytes() -> Result<[u8;32],String> {
+    let mut bytes=[0;32]; getrandom::getrandom(&mut bytes).map_err(|_| "OS entropy unavailable".to_string())?; Ok(bytes)
+}
+
 
 use ed25519_dalek::{Signer, SigningKey};
 pub use eudr_policy::EventWitness;
 use eudr_policy::{
-    certificate_leaf, certificate_padding_leaf, certificate_parent, evaluate,
+    evaluate,
     nullifier_default_path, nullifier_default_root, EpcisEventV1, PointE6, PolicyError,
     PolicyInput, CERTIFICATE_TREE_DEPTH, MAX_EVENTS,
 };
@@ -37,18 +73,18 @@ pub fn benchmark_events_for_lot(
             let mut key_material = Sha256::new();
             key_material.update(b"EUDR:E2:BENCHMARK:ED25519:V1");
             key_material.update(seed.to_be_bytes());
-            key_material.update(event_id.to_be_bytes());
+            key_material.update(lot_id.to_be_bytes());
             let signing_key = SigningKey::from_bytes(&key_material.finalize().into());
             let event = EpcisEventV1 {
                 event_id,
                 lot_id,
                 epoch_id,
-                timestamp_ms: 1_700_000_000_000 + event_id * 15_000,
+                timestamp_ms: 1_700_000_000_000 + (first_event_id % 1_000_000_000) * 15_000 + offset as u64 * 15_000,
                 readings: 800 + (event_id % 101) as u32,
                 // C1 proves the event is outside the committed forbidden polygon.
                 latitude_e6: 10_830_000 + (offset % 100) as i32,
                 longitude_e6: 106_760_000 + (offset % 100) as i32,
-                certificate_id: 10_000_000 + event_id,
+                certificate_id: lot_id,
                 role: eudr_policy::REQUIRED_ROLE,
                 actor_public_key: signing_key.verifying_key().to_bytes(),
             };
@@ -56,52 +92,52 @@ pub fn benchmark_events_for_lot(
             Ok(EventWitness {
                 event_bytes,
                 signature: signing_key.sign(&event_bytes).to_bytes(),
+                credential_index: 0,
                 certificate_path: [[0_u8; 32]; CERTIFICATE_TREE_DEPTH],
             })
         })
         .collect()
 }
 
-/// Binds already-ingested canonical bytes to the private policy witness.
-pub fn policy_input_from_events(
-    epoch_id: u64,
-    lot_id: u64,
-    mut events: Vec<EventWitness>,
-    old_nullifier_root: [u8; 32],
-    nullifier_secret: [u8; 32],
-    nullifier_path: [[u8; 32]; eudr_policy::NULLIFIER_TREE_DEPTH],
-) -> Result<PolicyInput, String> {
-    let decoded_events = events
-        .iter()
-        .map(|witness| {
-            let event = eudr_policy::decode_event(&witness.event_bytes)
-                .map_err(|error| format!("decode benchmark event: {error:?}"))?;
-            if event.epoch_id != epoch_id || event.lot_id != lot_id {
-                return Err("benchmark event does not match its assigned lot or epoch".to_string());
-            }
-            Ok(event)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let (certificate_root, certificate_paths) = certificate_tree(&decoded_events);
-    for (witness, certificate_path) in events.iter_mut().zip(certificate_paths) {
-        witness.certificate_path = certificate_path;
+/// Synthetic fixtures only. Prebuild once for the whole logical workload, before timing.
+pub fn benchmark_registry(seed: u64, events: &[EventWitness]) -> Result<eudr_policy::registry::RegistrySnapshot, String> {
+    use eudr_policy::registry::{Credential, RegistryIssuer};
+    let mut credentials = Vec::new();
+    let mut identities = std::collections::HashSet::new();
+    for witness in events {
+        let event = eudr_policy::decode_event(&witness.event_bytes).map_err(policy_error)?;
+        if identities.insert((event.lot_id,event.actor_public_key,event.certificate_id,event.role)) {
+            let index = u16::try_from(credentials.len()).map_err(|_| "registry capacity exceeded")?;
+            credentials.push(Credential { index, event, owner_identity: benchmark_owner(seed),
+                key_commitment: eudr_policy::nullifier_key_commitment(benchmark_nullifier_key(seed,event.lot_id)) });
+        }
     }
-
-    Ok(PolicyInput {
-        epoch_id,
-        lot_id,
-        polygon: forbidden_polygon(),
-        certificate_root,
-        old_nullifier_root,
-        nullifier_secret,
-        nullifier_path,
-        events,
-    })
+    RegistryIssuer::default().snapshot(credentials, forbidden_polygon(), synthetic_nonce(seed,0,b"POLYGON")).map_err(policy_error)
 }
+pub fn benchmark_owner(seed: u64) -> [u8;32] { synthetic_nonce(seed,0,b"OWNER") }
+fn synthetic_nonce(seed: u64, lot: u64, domain: &[u8]) -> [u8;32] {
+    let mut h = Sha256::new(); h.update(b"EUDR:SYNTHETIC:V2"); h.update(domain); h.update(seed.to_be_bytes()); h.update(lot.to_be_bytes()); h.finalize().into()
+}
+/// Credential issuance is deliberately absent here: membership comes from the prebuilt issuer snapshot.
+pub fn policy_input_from_events(
+    epoch_id: u64, lot_id: u64, mut events: Vec<EventWitness>, old_nullifier_root: [u8;32],
+    nullifier_key: [u8;32], nullifier_path: [[u8;32];eudr_policy::NULLIFIER_TREE_DEPTH],
+    registry: &eudr_policy::registry::RegistrySnapshot, owner_identity: [u8;32], batch_nonce: [u8;32],
+) -> Result<PolicyInput,String> {
+    for witness in &mut events {
+        let event = eudr_policy::decode_event(&witness.event_bytes).map_err(policy_error)?;
+        if event.epoch_id != epoch_id || event.lot_id != lot_id { return Err("event assigned to wrong lot/epoch".into()); }
+        let (index,path) = registry.credential(&event,owner_identity,nullifier_key).map_err(policy_error)?;
+        witness.credential_index=index; witness.certificate_path=path;
+    }
+    Ok(PolicyInput { epoch_id,lot_id,polygon:registry.polygon.clone(),certificate_root:registry.root(),old_nullifier_root,
+        nullifier_key,owner_identity,polygon_nonce:registry.polygon_nonce,batch_nonce,nullifier_path,events })
+}
+pub fn benchmark_batch_nonce(seed:u64,lot:u64) -> [u8;32] { synthetic_nonce(seed,lot,b"BATCH") }
 
-pub fn benchmark_nullifier_secret(seed: u64, lot_id: u64) -> [u8; 32] {
+pub fn benchmark_nullifier_key(seed: u64, lot_id: u64) -> [u8; 32] {
     let mut hasher = Sha256::new();
-    hasher.update(b"EUDR:E2:BENCHMARK:NULLIFIER:V1");
+    hasher.update(b"EUDR:E2:BENCHMARK:NULLIFIER-KEY:V2");
     hasher.update(seed.to_be_bytes());
     hasher.update(lot_id.to_be_bytes());
     hasher.finalize().into()
@@ -114,50 +150,10 @@ pub fn valid_input() -> PolicyInput {
 /// Produces one valid eight-event lot with caller-controlled public identifiers.
 /// The E2E smoke uses unique identifiers so Fabric rejects accidental replays.
 pub fn fixture_input(epoch_id: u64, first_event_id: u64) -> PolicyInput {
-    let lot_id = 17;
-    let polygon = forbidden_polygon();
-    let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
-    let mut decoded_events = Vec::new();
-    let mut signatures = Vec::new();
-    for index in 0..8_u64 {
-        let event = EpcisEventV1 {
-            event_id: first_event_id + index,
-            lot_id,
-            epoch_id,
-            timestamp_ms: 1_700_000_000_000 + index * 15_000,
-            readings: 800 + index as u32,
-            latitude_e6: 10_830_000 + index as i32,
-            longitude_e6: 106_760_000 + index as i32,
-            certificate_id: 10_000 + index,
-            role: 4,
-            actor_public_key: signing_key.verifying_key().to_bytes(),
-        };
-        let event_bytes = event.canonical_bytes();
-        decoded_events.push(event);
-        signatures.push((event_bytes, signing_key.sign(&event_bytes).to_bytes()));
-    }
-
-    let (certificate_root, certificate_paths) = certificate_tree(&decoded_events);
-    let events = signatures
-        .into_iter()
-        .enumerate()
-        .map(|(index, (event_bytes, signature))| EventWitness {
-            event_bytes,
-            signature,
-            certificate_path: certificate_paths[index],
-        })
-        .collect();
-
-    PolicyInput {
-        epoch_id,
-        lot_id,
-        polygon,
-        certificate_root,
-        old_nullifier_root: nullifier_default_root(),
-        nullifier_secret: [19_u8; 32],
-        nullifier_path: nullifier_default_path(),
-        events,
-    }
+    let events = benchmark_events_for_lot(7,epoch_id,17,first_event_id,8).unwrap();
+    let registry = benchmark_registry(7,&events).unwrap();
+    policy_input_from_events(epoch_id,17,events,nullifier_default_root(),benchmark_nullifier_key(7,17),nullifier_default_path(),
+        &registry,benchmark_owner(7),benchmark_batch_nonce(7,17)).unwrap()
 }
 
 fn forbidden_polygon() -> Vec<PointE6> {
@@ -191,11 +187,8 @@ pub fn prove(input: &PolicyInput) -> Result<SP1ProofWithPublicValues, String> {
 
 pub fn prove_evm_fixture(input: &PolicyInput) -> Result<String, String> {
     let (proof, program_vkey) = prove_internal(input)?;
-    Ok(format!(
-        "{{\n  \"vkey\": \"{program_vkey}\",\n  \"publicValues\": \"0x{}\",\n  \"proof\": \"0x{}\"\n}}\n",
-        hex::encode(proof.public_values.as_slice()),
-        hex::encode(proof.bytes())
-    ))
+    Ok(serde_json::json!({"protocolVersion":2,"sourceRevision":source_revision(),"verificationKind":"sp1-groth16","vkey":program_vkey,
+        "publicValues":format!("0x{}",hex::encode(proof.public_values.as_slice())),"proof":format!("0x{}",hex::encode(proof.bytes()))}).to_string())
 }
 
 /// Initialisation is deliberately outside the timed proof window in E2.
@@ -240,7 +233,7 @@ pub fn prove_epoch_with<P: Prover>(
     leaf_key: &P::ProvingKey,
     children: Vec<SP1ProofWithPublicValues>,
 ) -> Result<SP1ProofWithPublicValues, String> {
-    prove_epoch_node(client, epoch_key, leaf_key, children, false)
+    prove_epoch_node(client, epoch_key, leaf_key, children.into_iter().map(|p| (false,p)).collect(), false)
 }
 
 /// Recursively reduce arbitrary ordered leaf proofs with fan-in at most eight.
@@ -248,11 +241,12 @@ pub fn prove_epoch_tree_with<P: Prover>(
     client: &P,
     epoch_key: &P::ProvingKey,
     leaf_key: &P::ProvingKey,
-    mut children: Vec<SP1ProofWithPublicValues>,
+    children: Vec<SP1ProofWithPublicValues>,
 ) -> Result<SP1ProofWithPublicValues, String> {
     if children.is_empty() {
         return Err("epoch has no children".to_string());
     }
+    let mut children: Vec<_> = children.into_iter().map(|p| (false,p)).collect();
     while children.len() > eudr_policy::epoch::MAX_FAN_IN {
         let mut next = Vec::new();
         let mut remaining = children.into_iter();
@@ -264,7 +258,7 @@ pub fn prove_epoch_tree_with<P: Prover>(
             if group.is_empty() {
                 break;
             }
-            next.push(prove_epoch_node(client, epoch_key, leaf_key, group, true)?);
+            next.push((true,prove_epoch_node(client, epoch_key, leaf_key, group, true)?));
         }
         children = next;
     }
@@ -275,28 +269,17 @@ fn prove_epoch_node<P: Prover>(
     client: &P,
     epoch_key: &P::ProvingKey,
     leaf_key: &P::ProvingKey,
-    children: Vec<SP1ProofWithPublicValues>,
+    children: Vec<(bool, SP1ProofWithPublicValues)>,
     compressed: bool,
 ) -> Result<SP1ProofWithPublicValues, String> {
-    use eudr_policy::epoch::{EpochChild, EPOCH_PUBLIC_BYTES, LEAF_PUBLIC_BYTES};
+    use eudr_policy::epoch::{EpochChild, LEAF_PUBLIC_BYTES};
     let mut public_children = Vec::with_capacity(children.len());
-    for proof in &children {
+    for (aggregate, proof) in &children {
         let values = proof.public_values.as_slice();
-        let (vk, child) = match values.len() {
-            LEAF_PUBLIC_BYTES => (
-                leaf_key.verifying_key(),
-                EpochChild::Leaf(values.try_into().unwrap()),
-            ),
-            EPOCH_PUBLIC_BYTES => (
-                epoch_key.verifying_key(),
-                EpochChild::Aggregate(values.try_into().unwrap()),
-            ),
-            _ => {
-                return Err(
-                    "child public-values length is neither leaf nor aggregate ABI".to_string(),
-                )
-            }
-        };
+        if values.len() != LEAF_PUBLIC_BYTES { return Err("child ABI must be exactly 352 bytes".into()); }
+        let (vk, child) = if *aggregate {
+            (epoch_key.verifying_key(), EpochChild::Aggregate(values.try_into().unwrap()))
+        } else { (leaf_key.verifying_key(), EpochChild::Leaf(values.try_into().unwrap())) };
         client
             .verify(proof, vk, None)
             .map_err(|error| format!("SP1 child verification failed: {error}"))?;
@@ -311,12 +294,8 @@ fn prove_epoch_node<P: Prover>(
         eudr_policy::epoch::evaluate(&input).map_err(|error| format!("invalid epoch: {error}"))?;
     let mut stdin = SP1Stdin::new();
     stdin.write(&input.encode().map_err(str::to_string)?);
-    for proof in children {
-        let vk = match proof.public_values.as_slice().len() {
-            LEAF_PUBLIC_BYTES => leaf_key.verifying_key(),
-            EPOCH_PUBLIC_BYTES => epoch_key.verifying_key(),
-            _ => unreachable!("validated child ABI length"),
-        };
+    for (aggregate, proof) in children {
+        let vk = if aggregate { epoch_key.verifying_key() } else { leaf_key.verifying_key() };
         let SP1Proof::Compressed(compressed) = proof.proof else {
             return Err("epoch aggregation requires compressed SP1 child proofs".to_string());
         };
@@ -365,12 +344,8 @@ pub fn prove_evm_fixture_with<P: Prover>(
     input: &PolicyInput,
 ) -> Result<String, String> {
     let proof = prove_with(client, proving_key, input)?;
-    Ok(format!(
-        "{{\n  \"vkey\": \"{}\",\n  \"publicValues\": \"0x{}\",\n  \"proof\": \"0x{}\"\n}}\n",
-        proving_key.verifying_key().bytes32(),
-        hex::encode(proof.public_values.as_slice()),
-        hex::encode(proof.bytes())
-    ))
+    Ok(serde_json::json!({"protocolVersion":2,"sourceRevision":source_revision(),"verificationKind":"sp1-groth16","vkey":proving_key.verifying_key().bytes32(),
+        "publicValues":format!("0x{}",hex::encode(proof.public_values.as_slice())),"proof":format!("0x{}",hex::encode(proof.bytes()))}).to_string())
 }
 
 fn prove_internal(input: &PolicyInput) -> Result<(SP1ProofWithPublicValues, String), String> {
@@ -378,41 +353,6 @@ fn prove_internal(input: &PolicyInput) -> Result<(SP1ProofWithPublicValues, Stri
     let proving_key = setup_policy_prover(&client)?;
     let proof = prove_with(&client, &proving_key, input)?;
     Ok((proof, proving_key.verifying_key().bytes32().to_string()))
-}
-
-fn certificate_tree(
-    events: &[EpcisEventV1],
-) -> ([u8; 32], Vec<[[u8; 32]; CERTIFICATE_TREE_DEPTH]>) {
-    let mut levels = Vec::with_capacity(CERTIFICATE_TREE_DEPTH + 1);
-    let mut current = (0..MAX_EVENTS)
-        .map(|index| {
-            if let Some(event) = events.get(index) {
-                certificate_leaf(index, event)
-            } else {
-                certificate_padding_leaf(index)
-            }
-        })
-        .collect::<Vec<_>>();
-    levels.push(current.clone());
-    while current.len() > 1 {
-        current = current
-            .chunks_exact(2)
-            .map(|pair| certificate_parent(pair[0], pair[1]))
-            .collect();
-        levels.push(current.clone());
-    }
-    let paths = (0..events.len())
-        .map(|event_index| {
-            let mut path = [[0_u8; 32]; CERTIFICATE_TREE_DEPTH];
-            let mut index = event_index;
-            for (depth, level) in levels.iter().take(CERTIFICATE_TREE_DEPTH).enumerate() {
-                path[depth] = level[index ^ 1];
-                index >>= 1;
-            }
-            path
-        })
-        .collect();
-    (current[0], paths)
 }
 
 fn policy_error(error: PolicyError) -> String {
@@ -451,13 +391,15 @@ mod tests {
     #[test]
     fn benchmark_lot_binds_all_canonical_events_to_the_policy_input() {
         let events = benchmark_events_for_lot(7, 70, 71, 7_000, 16).unwrap();
+        let registry = benchmark_registry(7,&events).unwrap();
         let input = policy_input_from_events(
             70,
             71,
             events,
             nullifier_default_root(),
-            benchmark_nullifier_secret(7, 71),
+            benchmark_nullifier_key(7, 71),
             nullifier_default_path(),
+            &registry,benchmark_owner(7),benchmark_batch_nonce(7,71),
         )
         .unwrap();
         assert_eq!(input.events.len(), 16);
@@ -515,6 +457,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "HPC only: creates a real Groth16 proof"]
     fn cpu_groth16_proof_verifies_and_binds_public_values() {
         let input = valid_input();
         let expected = evaluate(&input).unwrap().abi_encode();
@@ -526,4 +469,50 @@ mod tests {
             .unwrap();
         assert_eq!(proof.public_values.as_slice(), expected);
     }
+    #[test]
+    fn key_binding_salts_openings_and_v2_decoding() {
+        let input = valid_input(); let public = evaluate(&input).unwrap();
+        let mut wrong = input.clone(); wrong.nullifier_key[0] ^= 1;
+        assert_eq!(evaluate(&wrong), Err(PolicyError::C2CredentialRoot));
+        let mut wrong = input.clone(); wrong.owner_identity[0] ^= 1;
+        assert_eq!(evaluate(&wrong), Err(PolicyError::C2CredentialRoot));
+        let tree = eudr_policy::event_tree(&input.events,input.batch_nonce);
+        let index = 2; let mut slot=index;
+        let path: Vec<_> = tree.iter().take(tree.len()-1).map(|level| { let s=level[slot^1];slot>>=1;s }).collect();
+        let salt = eudr_policy::event_salt(input.batch_nonce,index);
+        assert!(eudr_policy::verify_event_opening(8,index,salt,&input.events[index].event_bytes,&path,public.event_batch_digest));
+        assert!(!eudr_policy::verify_event_opening(9,index,salt,&input.events[index].event_bytes,&path,public.event_batch_digest));
+        let mut wrong_salt=salt;wrong_salt[0]^=1;
+        assert!(!eudr_policy::verify_event_opening(8,index,wrong_salt,&input.events[index].event_bytes,&path,public.event_batch_digest));
+        let mut changed=input.clone();changed.batch_nonce[0]^=1;
+        assert_ne!(evaluate(&changed).unwrap().event_batch_digest,public.event_batch_digest);
+        changed=input.clone();changed.polygon_nonce[0]^=1;
+        assert_ne!(evaluate(&changed).unwrap().polygon_commitment,public.polygon_commitment);
+        let mut bytes=input.encode().unwrap();bytes[0]=1;assert!(PolicyInput::decode(&bytes).is_err());
+        bytes[0]=2;bytes.push(0);assert!(PolicyInput::decode(&bytes).is_err());
+        let mut map=eudr_policy::SparseNullifierMap::default();
+        let index=eudr_policy::nullifier_index(input.lot_id,input.nullifier_key);map.insert(index).unwrap();
+        assert!(map.empty_path(index).is_err()); // index excludes epoch: cannot replay in a later epoch
+    }
+
+    #[test]
+    fn two_lots_share_one_preissued_policy_snapshot() {
+        let a=benchmark_events_for_lot(7,1,10,100,8).unwrap();
+        let b=benchmark_events_for_lot(7,1,11,108,8).unwrap();
+        let all:Vec<_>=a.iter().chain(&b).cloned().collect();
+        let registry=benchmark_registry(7,&all).unwrap();
+        let mut map=eudr_policy::SparseNullifierMap::default(); let mut children=Vec::new();
+        for (lot,events) in [(10,a),(11,b)] {
+            let key=benchmark_nullifier_key(7,lot);let index=eudr_policy::nullifier_index(lot,key);
+            let input=policy_input_from_events(1,lot,events,map.root(),key,map.empty_path(index).unwrap(),&registry,benchmark_owner(7),benchmark_batch_nonce(7,lot)).unwrap();
+            children.push(eudr_policy::epoch::EpochChild::Leaf(evaluate(&input).unwrap().abi_encode()));
+            map.insert(index).unwrap();
+        }
+        let epoch=eudr_policy::epoch::evaluate(&eudr_policy::epoch::EpochInput { leaf_vk_digest:[1;32],aggregate_vk_digest:[2;32],children }).unwrap();
+        assert_eq!(epoch.certificate_root,registry.root());assert_eq!(epoch.lot_count,2);assert_eq!(epoch.new_nullifier_root,map.root());
+        let bytes=epoch.abi_encode();assert_eq!(bytes.len(),352);
+        let nested=eudr_policy::epoch::evaluate(&eudr_policy::epoch::EpochInput {leaf_vk_digest:[1;32],aggregate_vk_digest:[2;32],children:vec![eudr_policy::epoch::EpochChild::Aggregate(bytes)]}).unwrap();
+        assert_eq!(nested.certificate_root,registry.root());assert_eq!(nested.polygon_commitment,epoch.polygon_commitment);
+    }
+
 }
