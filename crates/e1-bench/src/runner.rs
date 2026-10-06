@@ -301,7 +301,9 @@ fn peak_rss_mb() -> f64 {
     {
         if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
             if let Some(kb) = status.lines().find_map(|line| {
-                line.strip_prefix("VmPeak:").and_then(|rest| {
+                // RSS high-water mark, not the virtual address-space peak (VmPeak).
+                // This remains cumulative over the lifetime of this process.
+                line.strip_prefix("VmHWM:").and_then(|rest| {
                     rest.split_whitespace()
                         .next()
                         .and_then(|raw| raw.parse::<f64>().ok())
