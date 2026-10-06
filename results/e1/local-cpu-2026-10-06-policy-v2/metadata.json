@@ -1,0 +1,66 @@
+{
+  "sourceRevision": "b6a8cff7499379e2420f116662e61d92299580f8",
+  "cargoLockSha256": "09a4b0bc93cb4988a224a5fc6435e80b043865eef4321489bd8c12fd6390c447",
+  "host": {
+    "os": "macOS 26.5",
+    "arch": "arm64",
+    "memoryBytes": 34359738368,
+    "cpu": "Apple M1 Pro"
+  },
+  "scope": {
+    "experiment": "E1 local CPU smoke",
+    "path": "Plonky3 Path B",
+    "profile": "coffee-small",
+    "eventsPerLot": 8,
+    "seed": 1,
+    "credentialDepth": 16,
+    "friLogBlowup": 3,
+    "friNumQueries": 33,
+    "friQueryPowBits": 16,
+    "formalComplete": false
+  },
+  "base": {
+    "status": "passed-local",
+    "successfulRows": 5,
+    "rawSha256": "11136df58a595a999a97feb5bc83536e5c73b97c90686eab60742df0dfb0daec",
+    "watchdog": {
+      "validationKind": "local-resource-budget",
+      "status": "passed",
+      "reason": null,
+      "exitCode": 0,
+      "peakRssBytes": 66158592,
+      "elapsedSeconds": 2.776018333
+    }
+  },
+  "wrapper": {
+    "status": "incomplete-resource",
+    "successfulRows": 0,
+    "watchdog": {
+      "validationKind": "local-resource-budget",
+      "status": "local validation incomplete",
+      "reason": "swap_growth_limit",
+      "exitCode": -15,
+      "peakRssBytes": 4395597824,
+      "elapsedSeconds": 124.55751625
+    }
+  },
+  "sp1GuestExecute": {
+    "status": "passed-local",
+    "protocolVersion": 2,
+    "events": 8,
+    "proofGenerated": false,
+    "watchdog": {
+      "validationKind": "local-resource-budget",
+      "status": "passed",
+      "reason": null,
+      "exitCode": 0,
+      "peakRssBytes": 78331904,
+      "elapsedSeconds": 3.273229667
+    }
+  },
+  "sp1AggregateGroth16": {
+    "status": "not-run",
+    "reason": "local swap-growth budget was reached by the wrapper; E3 issue #42 gate pending"
+  },
+  "rawAvailability": "Owner-local output outside Git; request the bundle and verify rawSha256 before using as evidence"
+}
