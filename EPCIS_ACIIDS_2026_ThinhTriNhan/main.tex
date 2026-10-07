@@ -181,8 +181,8 @@ Child statements $(x_1,\dots,x_m)$, each a lot or an aggregate statement, satisf
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.94\textwidth]{figures/architecture.pdf}
-\caption{Architecture. Canonical EPCIS records are committed on Fabric (L0). Path A proves $\Rel$ per lot in SP1, aggregates leaves into $\Repoch$ with fan-in eight, wraps the root in Groth16 and settles it on the EVM (L1). Path B proves each predicate as a Plonky3 AIR for cost analysis. Auditors check L1 and receive openings off-chain \rev{from the data holder, who reads them from L0}.}
+\includegraphics[width=\textwidth]{figures/architecture.pdf}
+\caption{Architecture. Canonical EPCIS records are committed on Fabric (L0). Path A proves $\Rel$ per lot in SP1, aggregates leaves into $\Repoch$ with fan-in eight, wraps the root in Groth16 and settles it on the EVM (L1). Path B proves each predicate as a Plonky3 AIR for cost analysis. Auditors check L1 and receive openings off-chain \rev{from the data holder, who reads them from L0}. \rev{Only the root of the aggregation tree is wrapped, so an epoch costs one verification on L1 whatever $m$ is; \texttt{EpochAggregateAnchor} accepts it only under a root pair approved by \texttt{PolicyRegistry} (condition B1), and then advances the nullifier-set root. Shape encodes the kind of component: stadium for an actor, cylinder for the ledger, plain card for off-chain computation, double border for an EVM contract.}}
 \label{fig:arch}
 \end{figure}
 
@@ -202,7 +202,14 @@ A second guest program verifies up to eight child proofs with SP1's in-zkVM veri
 Path B is a circuit-cost research path that isolates selected predicate costs from zkVM overhead. C1 to C5 are Plonky3 AIRs over Goldilocks with Poseidon2 and FRI: a serial crossing-number AIR (C1), a depth-6 or depth-16 Poseidon2 Merkle path (C2), 32-bit range checks with time ordering (C3), a Poseidon2 authorisation preimage instead of Ed25519 (C4), and a depth-32 sparse-map update (C5). A recursive wrapper verifies and pairwise aggregates the five proofs. The two paths differ in hash function, C4 semantics and nullifier depth (32 versus 256); their numbers are not evidence of equivalent statements or a certified lower bound. New base and recursive FRI defaults use log blowup 3, 33 queries and 16 query grinding bits, about 115 conjectured bits under the checklist model, not a security certification. Measurements remain \pending{T-E1-01}{production-parameter rerun}. Path B has no EVM verifier and is not used for settlement.
 
 \subsection{Selective-disclosure compliance view}
-The selective-disclosure prototype opens chosen polygon and credential data and a subset of event Merkle leaves. It exports only the salts for selected events; it never exports the nullifier key, lot secret, batch nonce or unselected event bytes. Public authentication levels reconstruct the ordered aggregate commitment up to the mined epoch. Verification uses independently configured chain, anchor, registry, program keys and verifier code hash, checks the successful receipt and exact anchor log, and recomputes commitments and roots. A selected event authenticates the lot label; credential-only and polygon-only requests are rejected. The regulator, importer and certifier presets have local fixture tests; official bundle-size and verification-time measurements remain \pending{T-SD-01}{30 repetitions per view on the validated deployment}.
+\rev{Figure~\ref{fig:sd} shows the construction.} The selective-disclosure prototype opens chosen polygon and credential data and a subset of event Merkle leaves. It exports only the salts for selected events; it never exports the nullifier key, lot secret, batch nonce or unselected event bytes. Public authentication levels reconstruct the ordered aggregate commitment up to the mined epoch. Verification uses independently configured chain, anchor, registry, program keys and verifier code hash, checks the successful receipt and exact anchor log, and recomputes commitments and roots. A selected event authenticates the lot label; credential-only and polygon-only requests are rejected. The regulator, importer and certifier presets have local fixture tests; official bundle-size and verification-time measurements remain \pending{T-SD-01}{30 repetitions per view on the validated deployment}.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/disclosure.pdf}
+\caption{\rev{Selective disclosure. A view opens a chosen subset of salted event leaves (filled) together with the sibling hashes needed to recompute $R_E$ (heavy outline); the withheld leaves (slashed) and the holder's secrets never leave L0. The verifier, configured independently of the prover, recomputes $D$ and the policy roots and accepts only if they agree with the $\Gamma$ already anchored on L1.}}
+\label{fig:sd}
+\end{figure}
 % =================================================================
 \section{Security Analysis}
 \label{sec:security}
