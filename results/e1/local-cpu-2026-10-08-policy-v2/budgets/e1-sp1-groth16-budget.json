@@ -1,0 +1,8 @@
+{
+  "validationKind": "local-resource-budget",
+  "status": "local validation incomplete",
+  "reason": "swap_growth_limit",
+  "exitCode": -15,
+  "peakRssBytes": 10225795072,
+  "elapsedSeconds": 186.769452291
+}

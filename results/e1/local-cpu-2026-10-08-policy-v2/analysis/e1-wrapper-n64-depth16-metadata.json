@@ -1,0 +1,78 @@
+{
+  "timestamp_utc": "2026-10-08T05:07:26.273340+00:00",
+  "command": "local CPU E1 recursive wrapper n=64 seed=1 depth=16 coffee-small source=e6ea9b9",
+  "raw_csv": "/Users/huxtris/Documents/NCKH-local-validation/e1-e4.LNYgZP/e1-wrapper-n64-depth16.csv",
+  "rows": 1,
+  "raw_sha256": "fb347f5c01ad8e92c0794e80b12deb9f9ff529078769b28c17e4b74db24079b2",
+  "status_counts": {
+    "ok": 1
+  },
+  "failed_rows": [],
+  "provenance": {
+    "circuit_version": [
+      "v5-plonky3-recursion-github-blocked"
+    ],
+    "semantic_scope": [
+      "Path B circuit-cost research; C2 membership, C4 actor preimage, C5 32-bit Poseidon2 index; not equivalent to Path A SHA-256/256-bit nullifiers"
+    ],
+    "hash": [
+      "Poseidon2/Goldilocks (one-field statement digests)"
+    ],
+    "fri_log_blowup": [
+      "3"
+    ],
+    "fri_num_queries": [
+      "33"
+    ],
+    "fri_query_pow_bits": [
+      "16"
+    ],
+    "security_model": [
+      "approximately 115 conjectured bits (3*33+16) checklist model; not a security certification"
+    ]
+  },
+  "credential_depths": [
+    16
+  ],
+  "security_checklist_model": "3*33+16 = approximately 115 conjectured bits; not a security certification; field/hash/protocol bounds apply",
+  "semantic_scope": "Path B circuit-cost research; not equivalent to Path A SHA-256/256-bit nullifiers",
+  "circuits": [
+    "wrapper_recursive_plonky3"
+  ],
+  "events_per_lot": [
+    64
+  ],
+  "seeds_per_cell": {
+    "wrapper_recursive_plonky3:64:16": 1
+  },
+  "rustc": "rustc 1.97.0-nightly (e50aa6fba 2026-05-19)",
+  "cargo": "cargo 1.97.0-nightly (4d1f98451 2026-05-15)",
+  "backend": "Plonky3 core",
+  "hash": "Poseidon2",
+  "plonky3_core_crates": {
+    "source": "https://github.com/Plonky3/Plonky3",
+    "version": "0.6 (exact resolved packages recorded in Cargo.lock)",
+    "crates": [
+      "p3-field",
+      "p3-goldilocks",
+      "p3-poseidon2",
+      "p3-uni-stark",
+      "p3-fri",
+      "p3-merkle-tree"
+    ]
+  },
+  "plonky3_recursion_crates": {
+    "source": "https://github.com/Plonky3/Plonky3-recursion",
+    "rev": "b36339709a7a67ee9760fb578b3d4339fd983709",
+    "status": "research prototype dependency; active development and unaudited"
+  },
+  "python": "3.12.14",
+  "os": "macOS-26.5-arm64-arm-64bit",
+  "machine": "arm64",
+  "processor": "arm",
+  "cpu_logical": 8,
+  "ram_backend": "getrusage_ru_maxrss",
+  "proof_size_policy": "measured Plonky3 STARK proof bytes; 196 bytes is paper target, not claimed",
+  "c4_status": "Poseidon2 actor authorization proof; Ed25519/EdDSA production verification remains a separate blocker",
+  "recursion_status": "Plonky3-recursion revision b363397 has a real Rust wrapper prove/verify smoke test for C1-C5; Solidity/EVM verification is not implemented"
+}
