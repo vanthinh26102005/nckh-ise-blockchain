@@ -70,6 +70,12 @@ def analyze_records(records, *, policy_manifest=None, policy_manifest_bytes=None
     run = runs[0]
     if run.get("protocolVersion") != 2 or run.get("policyVersion") != 2:
         raise ValueError("historical runs are not policy-v2 evidence")
+    validation_kind = run.get("validationKind", "formal")
+    if validation_kind not in ("formal", "local-smoke"):
+        raise ValueError("unknown E2 validation kind")
+    local_smoke = validation_kind == "local-smoke"
+    if local_smoke and not allow_partial:
+        raise ValueError("local E2 smoke is never formal evidence; use --allow-partial")
     run_id = integer(run, "runId")
     if any(row.get("runId") != run_id for row in records):
         raise ValueError("records have missing or mixed run IDs")
@@ -78,6 +84,10 @@ def analyze_records(records, *, policy_manifest=None, policy_manifest_bytes=None
         raise ValueError("run must declare at least one seed")
     expected = set(range(1, seeds + 1))
     reasons = []
+    if local_smoke:
+        reasons.append("local-smoke cannot be formal evidence")
+        if seeds != 1 or run.get("prover") != "cpu" or run.get("mode") != "accelerated-pilot":
+            reasons.append("local smoke requires one seed, CPU prover and accelerated pilot mode")
     for field in ("lambdaEventsPerMin", "durationMin"):
         if not isinstance(run.get(field), (int, float)) or not math.isfinite(run[field]) or run[field] <= 0:
             raise ValueError(f"invalid {field}")
@@ -91,7 +101,9 @@ def analyze_records(records, *, policy_manifest=None, policy_manifest_bytes=None
     if preflight is None:
         reasons.append("read-only compute-host topology/hardware preflight is missing")
     else:
-        validate_preflight_record(preflight)
+        validate_preflight_record(preflight, allow_local=local_smoke)
+        if preflight.get("validationKind", "formal") != validation_kind:
+            raise ValueError("run and preflight validation kinds differ")
         if preflight["sourceRevision"]!=run.get("sourceRevision") or preflight["computeHost"]!=run.get("computeHost") or preflight["software"]["sp1_version"]!=run.get("sp1SdkVersion"):
             raise ValueError("run binary source/host/SP1 differs from preflight provenance")
         encoded=json.dumps(preflight,separators=(",",":"),sort_keys=True,ensure_ascii=False).encode()
@@ -104,6 +116,10 @@ def analyze_records(records, *, policy_manifest=None, policy_manifest_bytes=None
             raise ValueError("raw run does not match the supplied trusted policy manifest digest")
         if policy_manifest.get("protocolVersion") != 2 or policy_manifest.get("runId") != run_id:
             raise ValueError("trusted manifest protocol or run ID mismatch")
+        if (policy_manifest.get("sourceRevision") != run.get("sourceRevision")
+                or policy_manifest.get("sourceDirty") is not False
+                or policy_manifest.get("validationKind", "formal") != validation_kind):
+            raise ValueError("trusted manifest source revision or validation kind differs from run")
         for field in ("lambdaEventsPerMin", "durationMin", "seeds"):
             if policy_manifest.get(field) != run.get(field):
                 raise ValueError("run workload differs from the trusted manifest")
@@ -141,6 +157,8 @@ def analyze_records(records, *, policy_manifest=None, policy_manifest_bytes=None
                         raise ValueError("successful lot must have finite nonnegative latency")
                     if row.get("protocolVersion") != 2 or row.get("verificationKind") != "sp1-groth16" or row.get("policyValid") is not True:
                         raise ValueError("successful lot lacks policy-v2 real-proof receipt metadata")
+                    if row.get("fabricReadback") is not True:
+                        raise ValueError("successful lot lacks exact Fabric ledger readback evidence")
                     if not HEX32.fullmatch(str(row.get("transactionHash", ""))):
                         raise ValueError("successful lot is missing its mined transaction hash")
                     if not re.fullmatch(r"[0-9]+", str(row.get("gasUsed", ""))):
@@ -177,10 +195,14 @@ def analyze_records(records, *, policy_manifest=None, policy_manifest_bytes=None
             scheduled_events = terminal.get("scheduledEvents", sum(row["eventCount"] for row in rows)) if terminal else sum(row["eventCount"] for row in rows)
         else:
             scheduled_lots, scheduled_events = integer(plan, "scheduledLots"), integer(plan, "scheduledEvents")
-            if not 0.95 * run["lambdaEventsPerMin"] * run["durationMin"] <= scheduled_events <= 1.05 * run["lambdaEventsPerMin"] * run["durationMin"]:
-                reasons.append(f"seed {seed}: offered plan volume is not plausible for the full Poisson workload")
-            if plan.get("lastScheduledAtMs", 0) < run["durationMin"] * 60_000 * 0.95:
-                reasons.append(f"seed {seed}: schedule ends before the declared workload horizon")
+            if local_smoke:
+                if not 8 <= scheduled_events <= 16 or scheduled_lots < 1:
+                    reasons.append(f"seed {seed}: local event cap or complete-lot requirement failed")
+            else:
+                if not 0.95 * run["lambdaEventsPerMin"] * run["durationMin"] <= scheduled_events <= 1.05 * run["lambdaEventsPerMin"] * run["durationMin"]:
+                    reasons.append(f"seed {seed}: offered plan volume is not plausible for the full Poisson workload")
+                if plan.get("lastScheduledAtMs", 0) < run["durationMin"] * 60_000 * 0.95:
+                    reasons.append(f"seed {seed}: schedule ends before the declared workload horizon")
             if policy_manifest is not None:
                 for field in ("scheduledLots", "scheduledEvents", "scheduleSha256", "lastScheduledAtMs"):
                     if configured_seeds[seed].get(field) != plan.get(field):
@@ -196,8 +218,8 @@ def analyze_records(records, *, policy_manifest=None, policy_manifest_bytes=None
                                   ("saturatedLots", sum(row.get("failureStage") == "queue_saturated" for row in rows))):
                 if integer(terminal, field) != actual:
                     raise ValueError(f"seed {seed}: terminal {field} contradicts lot accounting")
-            for chain in (("scheduledLots", "offeredLots", "committedLots", "queuedLots", "receivedLots", "provedLots", "anchoredLots"),
-                          ("scheduledEvents", "offeredEvents", "committedEvents", "provedEvents", "anchoredEvents")):
+            for chain in (("scheduledLots", "offeredLots", "committedLots", "readbackLots", "queuedLots", "receivedLots", "provedLots", "anchoredLots"),
+                          ("scheduledEvents", "offeredEvents", "committedEvents", "readbackEvents", "provedEvents", "anchoredEvents")):
                 counts = [integer(terminal, key) for key in chain]
                 if any(a < b for a, b in zip(counts, counts[1:])):
                     raise ValueError("terminal progress counters are not monotonic")
@@ -211,7 +233,7 @@ def analyze_records(records, *, policy_manifest=None, policy_manifest_bytes=None
             producer_duration = terminal.get("producerDurationSec")
             if not isinstance(producer_duration, (int, float)) or not math.isfinite(producer_duration) or producer_duration < 0:
                 raise ValueError("seed terminal needs actual producer duration")
-            if producer_duration * 1000 < (plan.get("lastScheduledAtMs", 0) if plan else 0):
+            if not local_smoke and producer_duration * 1000 < (plan.get("lastScheduledAtMs", 0) if plan else 0):
                 reasons.append(f"seed {seed}: actual producer pacing stopped before the scheduled horizon")
         if seed not in registries:
             reasons.append(f"seed {seed}: missing prebuilt registry record")
@@ -223,9 +245,15 @@ def analyze_records(records, *, policy_manifest=None, policy_manifest_bytes=None
     if reasons and not allow_partial:
         raise ValueError("not formal E2 evidence: " + "; ".join(reasons[:4]) + "; use --allow-partial for an explicitly nonformal report")
     all_rows = [row for group in lots.values() for row in group]
+    local_exempt = {"local-smoke cannot be formal evidence", "accelerated/pilot pacing",
+                    "formal workload requires 480 events/min, 60 minutes and exactly 30 seeds"}
+    local_complete = local_smoke and not any(reason not in local_exempt for reason in reasons)
     return {
         "experiment": "E2 real Fabric acknowledgement to Anvil receipt", "protocolVersion": 2,
-        "evidenceClass": "nonformal-partial" if reasons else "formal", "nonformalReasons": reasons, "run": run,
+        "validationKind": validation_kind, "formalComplete": not reasons,
+        "localComplete": local_complete,
+        "evidenceClass": ("local-smoke" if local_complete else "local-smoke-incomplete") if local_smoke else ("nonformal-partial" if reasons else "formal"),
+        "nonformalReasons": reasons, "run": run,
         "aggregate": summarize(all_rows, sum(row["scheduledLots"] for row in per_seed.values()), sum(row["scheduledEvents"] for row in per_seed.values())),
         "perSeed": per_seed, "seedStatisticCI95Ms": seed_confidence_intervals(per_seed),
         "confidenceIntervalMethod": "2000 percentile bootstrap samples of seeds, mean of each per-seed statistic, deterministic seed 2; missing-latency seeds excluded only from latency CI",

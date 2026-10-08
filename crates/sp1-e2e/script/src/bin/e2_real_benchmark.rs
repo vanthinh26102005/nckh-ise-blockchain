@@ -44,6 +44,9 @@ struct Cli {
     /// Do not wait for Poisson timestamps. This is only for a debugging pilot, never paper data.
     #[arg(long)]
     accelerated: bool,
+    /// CPU-only local acceptance with one seed and a hard 8–16 canonical-event cap.
+    #[arg(long)]
+    local_smoke: bool,
     #[arg(long, default_value = "http://127.0.0.1:8080")]
     fabric_gateway: String,
     #[arg(long, default_value = "http://127.0.0.1:8546")]
@@ -99,6 +102,8 @@ struct SeedCounters {
     offered_lots: usize,
     committed_events: usize,
     committed_lots: usize,
+    readback_events: usize,
+    readback_lots: usize,
     queued_lots: usize,
     received_lots: usize,
     proved_lots: usize,
@@ -235,6 +240,7 @@ fn run<P: Prover>(cli: &Cli, prover: P) -> Result<()> {
         &mut output,
         &json!({
             "kind":"run", "protocolVersion":2, "policyVersion":2, "runId":run_id,
+            "validationKind":if cli.local_smoke {"local-smoke"} else {"formal"},
             "sourceRevision":revision, "sourceDirty":dirty,
             "computeHost":compute_host,"sp1SdkVersion":sp1_sdk_version(),"preflight":preflight,
             "preflightFileSHA256":preflight_raw.as_ref().and_then(|result|result.as_ref().ok()).map(|bytes|hex::encode(Sha256::digest(bytes))),
@@ -252,6 +258,9 @@ fn run<P: Prover>(cli: &Cli, prover: P) -> Result<()> {
         }),
     )?;
     let setup = (|| -> Result<_> {
+        if dirty {
+            bail!("E2 requires a clean source checkout before Fabric events are posted");
+        }
         if matches!(cli.prover, ProverKind::Cuda) && preflight.is_none() {
             bail!("CUDA E2 requires --preflight read-only hardware/topology evidence");
         }
@@ -273,6 +282,8 @@ fn run<P: Prover>(cli: &Cli, prover: P) -> Result<()> {
             &manifest,
             &key.verifying_key().bytes32().to_string(),
             run_id,
+            &revision,
+            if cli.local_smoke { "local-smoke" } else { "formal" },
         )?;
         if manifest["lambdaEventsPerMin"].as_f64() != Some(cli.lambda_events_per_min)
             || manifest["durationMin"].as_f64() != Some(cli.duration_min)
@@ -522,8 +533,10 @@ fn run<P: Prover>(cli: &Cli, prover: P) -> Result<()> {
                     "eventCount":event_count,"proofMs":proof_ms,"anvilAnchorMs":anchor_ms,
                     "fabricAcknowledgementToReceiptMs":latency,"proofBytes":proof_bytes,
                     "gasUsed":gas_used,"transactionHash":transaction_hash,"status":"ok",
+                    "fabricReadback":true,
                     "protocolVersion":2,"verificationKind":"sp1-groth16","certificateRoot":receipt["certificateRoot"],
-                    "polygonCommitment":receipt["polygonCommitment"],"policyValid":true}),
+                    "polygonCommitment":receipt["polygonCommitment"],"policyValid":true,
+                    "receipt":receipt}),
                 )
             })();
             recorded.insert(lot.lot_id);
@@ -663,7 +676,7 @@ fn spawn_fabric_producer(
     thread::spawn(move || {
         let started = Instant::now();
         let mut outcome = ProducerOutcome::default();
-        'lots: for plan in plans {
+        'lots: for mut plan in plans {
             if stop.load(Ordering::Acquire) {
                 break;
             }
@@ -693,12 +706,27 @@ fn spawn_fabric_producer(
             }
             counters.lock().unwrap().committed_lots += 1;
             outcome.committed_lots.insert(plan.lot_id);
+            let acknowledged_at = Instant::now();
+            for event in &mut plan.events {
+                match fabric.read_committed_event(&event.event_bytes) {
+                    Ok(ledger_bytes) => {
+                        event.event_bytes = ledger_bytes;
+                        counters.lock().unwrap().readback_events += 1;
+                    }
+                    Err(error) => {
+                        outcome.failures.insert(plan.lot_id, ("fabric_readback", error.to_string()));
+                        outcome.failure = Some(error.to_string());
+                        break 'lots;
+                    }
+                }
+            }
+            counters.lock().unwrap().readback_lots += 1;
             let lot = ProducedLot {
                 seed,
                 lot_id: plan.lot_id,
                 epoch_id: plan.epoch_id,
                 events: plan.events,
-                acknowledged_at: Instant::now(),
+                acknowledged_at,
             };
             match queue::send_before_deadline(&sender, lot, &stop, queue_timeout) {
                 Ok(()) => {
@@ -797,6 +825,21 @@ fn validate_preflight(record: &Value, revision: &str, host: &str, cli: &Cli) -> 
     {
         bail!("E2 preflight source/host/SP1/endpoints differ from this binary and runtime");
     }
+    let expected_kind = if cli.local_smoke { "local-smoke" } else { "formal" };
+    if record["validationKind"].as_str() != Some(expected_kind) {
+        bail!("E2 preflight validation kind differs from this run");
+    }
+    if cli.local_smoke {
+        if record["prover"].as_str() != Some("cpu")
+            || record["hardware"]["gpu_model_driver"].as_str() != Some("N/A")
+            || record["hardware"]["cuda_toolkit"].as_str() != Some("N/A")
+            || record["gpuUnavailableReason"]
+                .as_str()
+                .is_none_or(|reason| reason.is_empty())
+        {
+            bail!("local E2 needs CPU provenance and an explicit GPU/CUDA N/A reason");
+        }
+    }
     for key in [
         "cpu_model",
         "cpu_logical",
@@ -868,15 +911,24 @@ fn schedule_fingerprint(schedules: &[LotSchedule]) -> Result<String> {
     Ok(hex::encode(Sha256::digest(serde_json::to_vec(&schedule)?)))
 }
 
-fn validate_policy_manifest(manifest: &Value, program_key: &str, run_id: u64) -> Result<()> {
+fn validate_policy_manifest(
+    manifest: &Value,
+    program_key: &str,
+    run_id: u64,
+    revision: &str,
+    validation_kind: &str,
+) -> Result<()> {
     if manifest["protocolVersion"].as_u64() != Some(2)
         || manifest["runId"].as_u64() != Some(run_id)
+        || manifest["sourceRevision"].as_str() != Some(revision)
+        || manifest["sourceDirty"].as_bool() != Some(false)
+        || manifest["validationKind"].as_str() != Some(validation_kind)
         || manifest["leafProgramVKey"]
             .as_str()
             .or_else(|| manifest["programVKey"].as_str())
             != Some(program_key)
     {
-        bail!("trusted manifest must match policy-v2, workload run ID and pinned leaf program key");
+        bail!("trusted manifest must match policy-v2, clean source revision, validation kind, run ID and pinned leaf program key");
     }
     let pairs = manifest["acceptedPolicies"]
         .as_array()
@@ -912,6 +964,10 @@ fn require_trusted_pair(
 
 fn prepare_policy_manifest<P: Prover>(cli: &Cli, prover: &P, path: &PathBuf) -> Result<()> {
     let run_id = cli.run_id.unwrap_or_else(default_run_id);
+    let (revision, dirty) = source_revision();
+    if dirty {
+        bail!("E2 trusted manifest preparation requires a clean source checkout");
+    }
     // Setup returns program keys only; neither prove nor execute nor RPC is used.
     let leaf = setup_policy_prover(prover).map_err(|error| anyhow!(error))?;
     let aggregate = setup_epoch_prover(prover).map_err(|error| anyhow!(error))?;
@@ -938,8 +994,8 @@ fn prepare_policy_manifest<P: Prover>(cli: &Cli, prover: &P, path: &PathBuf) -> 
         );
         pairs.push(pair);
     }
-    let (revision, dirty) = source_revision();
     let manifest = json!({"protocolVersion":2,"runId":run_id,"sourceRevision":revision,"sourceDirty":dirty,
+        "validationKind":if cli.local_smoke {"local-smoke"} else {"formal"},
         "leafProgramVKey":leaf.verifying_key().bytes32().to_string(),"aggregateProgramVKey":aggregate.verifying_key().bytes32().to_string(),
         "leafVKeyDigest":bytes32(leaf.verifying_key().hash_bytes()),"aggregateVKeyDigest":bytes32(aggregate.verifying_key().hash_bytes()),
         "lambdaEventsPerMin":cli.lambda_events_per_min,"durationMin":cli.duration_min,"seeds":cli.seeds,
@@ -992,6 +1048,20 @@ fn validate_cli(cli: &Cli) -> Result<()> {
             "seeds must be 1..999, queue capacity 1..65536, queue timeout finite 0..3600 seconds"
         );
     }
+    if cli.local_smoke {
+        if !matches!(cli.prover, ProverKind::Cpu)
+            || cli.seeds != 1
+            || !cli.accelerated
+            || cli.queue_capacity > 2
+            || cli.queue_wait_timeout_sec > 10.0
+        {
+            bail!("local E2 requires CPU, --accelerated, one seed, queue capacity <=2 and queue timeout <=10 seconds");
+        }
+        validate_local_workload(cli.lambda_events_per_min, cli.duration_min)?;
+        if cli.out.is_some() && cli.preflight.is_none() {
+            bail!("local E2 runtime requires --preflight from the observed private stack");
+        }
+    }
     let destination = match (&cli.out, &cli.prepare_policy_manifest) {
         (Some(path), None) | (None, Some(path)) => path,
         _ => bail!(
@@ -1004,6 +1074,21 @@ fn validate_cli(cli: &Cli) -> Result<()> {
             .any(|part| matches!(part, std::path::Component::ParentDir))
     {
         bail!("--out must be a new absolute path without .. outside the Git checkout");
+    }
+    Ok(())
+}
+
+fn validate_local_workload(lambda_events_per_min: f64, duration_min: f64) -> Result<()> {
+    if lambda_events_per_min * duration_min > 32.0 {
+        bail!("local E2 expected event volume exceeds bounded preparation budget");
+    }
+    let events = generate_poisson_event_stream(1, lambda_events_per_min, duration_min);
+    if !(8..=16).contains(&events.len()) {
+        bail!("local E2 canonical event cap requires 8..16 events; schedule has {}", events.len());
+    }
+    let lots = accumulate_lots(&events, 1);
+    if lots.is_empty() || lots.iter().map(|lot| lot.events.len()).sum::<usize>() != events.len() {
+        bail!("local E2 needs at least one complete lot and exact event accounting");
     }
     Ok(())
 }
@@ -1095,5 +1180,28 @@ mod tests {
     #[test]
     fn percentile_interpolates_between_samples() {
         assert_eq!(percentile(&[10.0, 20.0, 30.0, 40.0], 50.0), 25.0);
+    }
+
+    #[test]
+    fn local_workload_has_a_hard_cap_on_real_canonical_events() {
+        assert!(validate_local_workload(16.0, 1.0).is_ok());
+        assert!(validate_local_workload(480.0, 1.0).is_err());
+        assert!(validate_local_workload(1.0, 1.0).is_err());
+    }
+
+    #[test]
+    fn trusted_manifest_rejects_revision_and_validation_kind_mismatch() {
+        let key = format!("0x{}", "33".repeat(32));
+        let mut manifest = json!({
+            "protocolVersion":2,"runId":900002,"sourceRevision":"a".repeat(40),
+            "sourceDirty":false,"validationKind":"local-smoke","leafProgramVKey":key,
+            "acceptedPolicies":[{"certificateRoot":format!("0x{}", "11".repeat(32)),
+                                  "polygonCommitment":format!("0x{}", "22".repeat(32))}]
+        });
+        assert!(validate_policy_manifest(&manifest, &key, 900002, &"a".repeat(40), "local-smoke").is_ok());
+        assert!(validate_policy_manifest(&manifest, &key, 900002, &"b".repeat(40), "local-smoke").is_err());
+        assert!(validate_policy_manifest(&manifest, &key, 900002, &"a".repeat(40), "formal").is_err());
+        manifest["sourceDirty"] = json!(true);
+        assert!(validate_policy_manifest(&manifest, &key, 900002, &"a".repeat(40), "local-smoke").is_err());
     }
 }
