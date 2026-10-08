@@ -1,0 +1,77 @@
+{
+  "experiment": "E3 local paired CPU smoke",
+  "protocolVersion": 2,
+  "validationKind": "local-smoke",
+  "localComplete": true,
+  "formalComplete": false,
+  "evidenceClass": "local-smoke",
+  "nonformalReasons": [
+    "one accelerated CPU seed; formal 4 \u00d7 30 paced GPU/HPC runs pending"
+  ],
+  "seed": 1,
+  "modeOrder": [
+    "hash-on-chain",
+    "vecro-adapted",
+    "fabric-only",
+    "proposed"
+  ],
+  "sourceRevision": "94affcd733f2d0727e8943de1e449d7e3231029d",
+  "gateTransactionHash": "0xf03731d970eae2bb573a42659a5109fb22c99062da3b0689f2a8885a4b0152b9",
+  "manifestSha256": "56465c2c158823782efa060f98aa8a1da6dc7b3a67d7e302dec1dfca296c30ab",
+  "workloadDigest": "0xd227f25df5957f94f4d779c420eedfd843cd0d6a111dfb3644cb6cd20bcd15e1",
+  "host": "MacBook-Pro-cua-HuxTris.local",
+  "runs": 4,
+  "modes": {
+    "fabric-only": {
+      "elapsedSeconds": 18.308370084,
+      "throughputShipmentsPerMin": 3.2771895982392794,
+      "throughputEventsPerSec": 0.4915784397358919,
+      "auditLatencyMs": [
+        0.0
+      ],
+      "gasPerShipment": null,
+      "calldataBytesPerShipment": null,
+      "transactions": []
+    },
+    "hash-on-chain": {
+      "elapsedSeconds": 18.378898333,
+      "throughputShipmentsPerMin": 3.264613521054619,
+      "throughputEventsPerSec": 0.4896920281581929,
+      "auditLatencyMs": [
+        85.0
+      ],
+      "gasPerShipment": 46907.0,
+      "calldataBytesPerShipment": 100.0,
+      "transactions": [
+        "0xcad63c2fa5b735faf35d10d8702a3d0fa6bc1052aa29689610926c299799ecd5"
+      ]
+    },
+    "vecro-adapted": {
+      "elapsedSeconds": 1729.60912275,
+      "throughputShipmentsPerMin": 0.03468991878616061,
+      "throughputEventsPerSec": 0.005203487817924091,
+      "auditLatencyMs": [
+        1711253.0
+      ],
+      "gasPerShipment": 298870.0,
+      "calldataBytesPerShipment": 868.0,
+      "transactions": [
+        "0xc1eca8e84cf0ba3d8d0b6db0f159187e328a5d5d46fa9a2af5822d0e43b71ab5"
+      ]
+    },
+    "proposed": {
+      "elapsedSeconds": 1884.3862595,
+      "throughputShipmentsPerMin": 0.031840605766208625,
+      "throughputEventsPerSec": 0.0047760908649312935,
+      "auditLatencyMs": [
+        1866069.0
+      ],
+      "gasPerShipment": 301280.0,
+      "calldataBytesPerShipment": 932.0,
+      "transactions": [
+        "0xaf6bfce9789f508a16062d4d51302a12dcf258d1ae57366e903a3bfdb7daa8f4"
+      ]
+    }
+  },
+  "pairedTests": []
+}

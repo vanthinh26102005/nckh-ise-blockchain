@@ -1,0 +1,58 @@
+{
+  "kind": "e3_local_public_provenance",
+  "validationKind": "local-smoke",
+  "sourceRevision": "94affcd733f2d0727e8943de1e449d7e3231029d",
+  "sourceDirtyAtRun": false,
+  "host": {
+    "host": "MacBook-Pro-cua-HuxTris.local",
+    "os": "macOS-26.5-arm64-arm-64bit",
+    "cpu": "Apple M1 Pro",
+    "logicalCpus": 8,
+    "ramBytes": 34359738368,
+    "dockerServer": "29.2.1",
+    "dockerMemoryBytes": 24370905088,
+    "anvilImageId": "sha256:043752653d5be351c71709091b3db97c4421c907eb40ea294195e7f532aadf46",
+    "rustc": "rustc 1.97.0-nightly (e50aa6fba 2026-05-19)",
+    "go": "go version go1.27.1 darwin/arm64",
+    "node": "v24.14.0",
+    "npm": "11.9.0"
+  },
+  "gateBinarySha256": "24e77102a2eeb5d31b0297448666e1f644133290bfdbe40e3ae0f311603eac26",
+  "modeBinarySha256": "0bf8ace311f992b6fafb1e7110e00e723e9355be4e11624c0fe9e530bed4e8a5",
+  "privateOutputRoot": "/Users/huxtris/.codex/worktrees/e3-local-validation/output",
+  "privateArtifactsSha256": {
+    "e3-gate-policy.json": "d3eb7a10e150261079ab07e23b40f83d8bfc950290b5f4bff1574d076fea71ea",
+    "e3-gate-proof.json": "0645add836bab87cf28632ec7c1b451719e2bf460790379db0ae50531728f614",
+    "e3-gate-receipt.json": "7299b1dd572c6a62d696ff68701dffafea7e1a70c0f7deb9e57b0a478634054f",
+    "e3-gate-manifest.json": "e7d7f8a99a16b330c520b389354e0a554cdb7db2f4946d10981a48f5834a54fd",
+    "e3-local-policy.json": "56465c2c158823782efa060f98aa8a1da6dc7b3a67d7e302dec1dfca296c30ab",
+    "e3-local-analysis.json": "ccd8130e2a0ac611b85725318180aede399ed8835da66ceeea704f8daf3fbbaf",
+    "e3-gate-run.log": "849073547386d8fd23ebc23990fa041d371bbd5600ce41f38224dbc37d470a71",
+    "formal-rejection.log": "ea4612f957fa524a959dab78ee8a0c80137dffeed58354d7a6ac15a19df061e4",
+    "modes/hash-on-chain.json": "66d77ff924220d912da9bf342d40eedb64894ebbb963645970c169480284fcc8",
+    "modes/hash-on-chain-run.log": "5e9d52093e946d779d0fdcfc0625b5da2ac6eae09b807309202ebbee7158cd8d",
+    "modes/vecro-adapted.json": "82dcdbc0addd2ac63eaef0d145533c4b068b3c3618e52d95d15f7dac09b69e59",
+    "modes/vecro-adapted-run.log": "7836992b29202871ebbadcde251961151960cc75c379d857f5c4b07db95372ce",
+    "modes/fabric-only.json": "70ab85e6acb4eea1a6bdaa79389f4cd7780f3b9268bab7b4f69afb9b0de08849",
+    "modes/fabric-only-run.log": "5663c0351f60d55cdd130dcfc9e2da01a97e8130140977c88d86b39ba7a04785",
+    "modes/proposed.json": "1b59cca09f7c13af196c5e26b48ff54fe7c76a01f05d2bd41ad6ff73de48f131",
+    "modes/proposed-run.log": "ae9587932084c6f3d71de5a67250142b63e13103739bbcf861a74c26d031a07c"
+  },
+  "publicArtifactsSha256": {
+    "analysis.json": "ccd8130e2a0ac611b85725318180aede399ed8835da66ceeea704f8daf3fbbaf",
+    "budgets/fabric-only.json": "8142a160a2d533bf2a9de08e6db77e7988980267a9cfd4fdcdd6d3fcdc23ab3e",
+    "budgets/gate.json": "89f5732542f0e2740ede591f0ed54b49ed4a76b6a165b4780e5f947fe32f1538",
+    "budgets/hash-on-chain.json": "031751689314c62bab9fc2b5a994ea288c6704d573e9bd932a13c90ae426798d",
+    "budgets/proposed.json": "3b6e08799e5420e055016c71209b54d8dabab78fe6b683ccd029b1da45d9ca94",
+    "budgets/vecro-adapted.json": "23f6a3082e809d1166cc7bc4563ad07c374a1dd56ea220aecf4da43a62f2a0cd",
+    "chain-check.json": "32661b7009011b9a50321a9f6cbf0a6700c74ea12f4110c86fd298463684e5db",
+    "gate.json": "e7d7f8a99a16b330c520b389354e0a554cdb7db2f4946d10981a48f5834a54fd",
+    "ledger-check.json": "e6da4549dfd495c2eccb741664539d9a3e12368197fa9b9eff5a060afe97663c",
+    "receipts.json": "83aaddf7719e351245aa89a5500d55c93f095844b2422111ab343aa437eef86f",
+    "report.md": "8f764cd1b407ca72c0dea3d6e280d330fbe76d576c7cc1a8f59ca146dcbc866d"
+  },
+  "fabricImageIds": {
+    "hyperledger/fabric-peer:2.5.16": "sha256:09ee75042de9983bfde31ca88a5bf033386351f10a990e4c48264ee50172dee0",
+    "hyperledger/fabric-orderer:2.5.16": "sha256:e322c57331d37e0a35ffae3cb3d3265a0e852211c0f801f2514cc15b964ffc93"
+  }
+}

@@ -114,17 +114,57 @@ Prepare the *separate* paired workload manifest from the same clean source revis
   --np 4 --shipment 16 --epoch-s 60 --epochs 1 \
   --prepare-policy-manifest "$E3_OUTPUT/e3-local-policy.json"
 export POLICY_MANIFEST="$E3_OUTPUT/e3-local-policy.json"
-# For each mode in the seed-1 order, start a freshly rebuilt stack, then:
-bash scripts/e2_stack.sh up
-python3 scripts/e3_local_warmup.py --out "$E3_OUTPUT/<mode>-warmup.json"
-uv run --python 3.12 python scripts/e3_local_run.py \
-  --binary "$E3_MODE_BINARY" --gate "$E3_OUTPUT/e3-gate-manifest.json" \
-  --policy-manifest "$POLICY_MANIFEST" --mode <mode> \
-  --allocation-root "$EUDR_RUN_ROOT" --out "$E3_OUTPUT/modes/<mode>.json"
-bash scripts/e2_stack.sh down
-# Review and remove this checkout's generated runtime before the next mode.
+reset_e3_runtime() {
+  bash infra/fabric/raft/bootstrap.sh down
+  python3 - <<'PY'
+from pathlib import Path
+import shutil
+repo = Path.cwd().resolve()
+runtime = (repo / "infra/fabric/raft/runtime").resolve()
+assert runtime == repo / "infra/fabric/raft/runtime" and (repo / ".git").exists()
+if runtime.is_dir():
+    shutil.rmtree(runtime)
+PY
+  python3 - <<'PY'
+import socket, time
+ports = (7050, 7051, 7053, 8050, 8053, 9050, 9053, 9051, 8080, 8545, 8546)
+for _ in range(90):
+    free = True
+    for port in ports:
+        with socket.socket() as connection:
+            try:
+                connection.bind(("127.0.0.1", port))
+            except OSError:
+                free = False
+    if free:
+        break
+    time.sleep(1)
+else:
+    raise SystemExit("E3 stack ports are still in use")
+PY
+}
+reset_e3_runtime
+for mode in hash-on-chain vecro-adapted fabric-only proposed; do
+  bash scripts/e2_stack.sh up
+  python3 scripts/e3_local_warmup.py --out "$E3_OUTPUT/$mode-warmup.json"
+  uv run --python 3.12 python scripts/e3_local_run.py \
+    --binary "$E3_MODE_BINARY" --gate "$E3_OUTPUT/e3-gate-manifest.json" \
+    --policy-manifest "$POLICY_MANIFEST" --mode "$mode" \
+    --allocation-root "$EUDR_RUN_ROOT" --out "$E3_OUTPUT/modes/$mode.json"
+  bash scripts/e2_stack.sh down
+  reset_e3_runtime
+done
+```
+
+After all four modes finish, give the analyzer a directory containing only the four mode records. Keep warmup, budget and audit JSON files in `modes/` so they cannot be mistaken for mode records:
+
+```sh
+mkdir -p "$E3_OUTPUT/paired-records"
+for mode in hash-on-chain vecro-adapted fabric-only proposed; do
+  ln -s "../modes/$mode.json" "$E3_OUTPUT/paired-records/$mode.json"
+done
 uv run --python 3.12 python scripts/e3_local_analyze.py \
-  --raw-dir "$E3_OUTPUT/modes" --out "$E3_OUTPUT/e3-local-analysis.json"
+  --raw-dir "$E3_OUTPUT/paired-records" --out "$E3_OUTPUT/e3-local-analysis.json"
 ```
 
 The mode runner records actual workload digest, source revision, gate hash, receipt and observed container IDs. The local analyzer requires all four distinct stacks and the same paired workload, and emits `localComplete`; the formal `e3_analyze.py` rejects these records even with `--allow-partial`. Verify the gate receipt/root and each mode's L1 scope before publishing public summaries. Keep private raw proof, manifests, full logs and signing material outside Git.
