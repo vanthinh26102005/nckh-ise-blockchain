@@ -10,10 +10,16 @@ orderers. Its certificates, channel block, Docker volumes and ledger live under
 
 ## Start the E2 Raft topology
 
-Docker pulls the pinned `hyperledger/fabric-tools:2.5.8` image once; no Fabric
+Docker pulls the pinned `hyperledger/fabric-tools:2.5.16` image once; no Fabric
 binary or generated crypto is committed. Bootstrap joins all three orderers to
 `e2channel`, sets the two anchor peers, and commits `e2epcis` only after both
 Org1 and Org2 approve its endorsement policy.
+
+The peer and orderer images are also pinned to Fabric 2.5.16. Fabric 2.5.15
+introduced the upstream fix for chaincode builds against Docker Engine 29;
+older 2.5.8 peers fail at `InstallChaincode` with a Docker socket `broken pipe`
+on Docker Desktop 29. See [Fabric issue #5350](https://github.com/hyperledger/fabric/issues/5350)
+and the [2.5.15 release notes](https://github.com/hyperledger/fabric/releases/tag/v2.5.15).
 
 ```bash
 cd /absolute/path/to/nckh-ise-blockchain
