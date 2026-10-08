@@ -76,6 +76,59 @@ uv run --python 3.12 python scripts/e2_real_analyze.py \
 
 Check `localComplete=true`, every lot `fabricReadback=true`, the mined SP1 receipt and the final Fabric/Anvil root transition before calling this local pass. The runtime records an exact ledger readback of every event after Fabric acknowledgement and before proving. Preserve output and logs, then run `bash scripts/e2_stack.sh down` only for the stack owned by this checkout. The local preflight marks GPU/CUDA `N/A` with a reason and is rejected by the formal preflight gate; `make e2` remains the separate paced 480/60/30 campaign.
 
+## E3 local CPU gate and paired four-mode smoke
+
+Issue #42 has two local acceptance stages. Stage A is a real two-lot × eight-event recursive SP1 gate and Anvil receipt. Stage B runs the same deterministic nine-event, one-shipment workload through all four modes on **fresh Fabric and Anvil state per mode**. The local path is accelerated, one CPU seed, and cannot populate the formal RQ3 table or Wilcoxon tests. Run serially from a clean, dedicated checkout inside its private `EUDR_RUN_ROOT`; private proof/witness files stay outside Git.
+
+```sh
+export EUDR_RUN_ROOT="$(dirname "$PWD")"
+export E3_OUTPUT="$EUDR_RUN_ROOT/output"
+export ANVIL_IMAGE=ghcr.io/foundry-rs/foundry:stable
+mkdir -p "$E3_OUTPUT" "$E3_OUTPUT/modes"
+npm ci --prefix contracts
+cargo build --locked --release --manifest-path crates/sp1-e2e/Cargo.toml \
+  -p sp1-e2e --bin e3_epoch_gate --bin e4_real_cell
+export E3_GATE_BINARY="$PWD/crates/sp1-e2e/target/release/e3_epoch_gate"
+export E3_MODE_BINARY="$PWD/crates/sp1-e2e/target/release/e4_real_cell"
+export POLICY_MANIFEST="$E3_OUTPUT/e3-gate-policy.json"
+"$E3_GATE_BINARY" --prepare-only --prover cpu --epoch-id 700001 \
+  --events-per-leaf 8 --out "$POLICY_MANIFEST"
+bash scripts/e2_stack.sh up
+python3 scripts/e3_local_warmup.py --out "$E3_OUTPUT/e3-gate-warmup.json"
+"$E3_GATE_BINARY" --prover cpu --epoch-id 700001 --events-per-leaf 8 \
+  --out "$E3_OUTPUT/e3-gate-proof.json"
+E3_FIXTURE="$E3_OUTPUT/e3-gate-proof.json" ANVIL_RPC=http://127.0.0.1:8545 \
+  node contracts/test/anvil_e3_smoke.mjs > "$E3_OUTPUT/e3-gate-receipt.json"
+python3 scripts/e3_gate_manifest.py --fixture "$E3_OUTPUT/e3-gate-proof.json" \
+  --receipt "$E3_OUTPUT/e3-gate-receipt.json" --git-commit "$(git rev-parse HEAD)" \
+  --out "$E3_OUTPUT/e3-gate-manifest.json"
+bash scripts/e2_stack.sh down
+```
+
+The stack down command leaves ignored generated Fabric crypto/runtime in place. After collecting and checking the gate evidence, call `bash infra/fabric/raft/bootstrap.sh down`, inspect the exact `infra/fabric/raft/runtime` directory owned by this checkout, and remove it before starting a new stack. Do this after each paired mode as well. A cold chaincode may exceed the first 30-second endorsement deadline; the excluded warmup retries only after checking whether its sentinel event was committed.
+
+Prepare the *separate* paired workload manifest from the same clean source revision. The one-seed Poisson schedule yields nine events with `np=4`, shipment size 16 and one 60-second epoch; local execution skips waiting for due times but preserves their deterministic order and digest. Rotate modes for seed 1 as `hash-on-chain`, `vecro-adapted`, `fabric-only`, `proposed`:
+
+```sh
+"$E3_MODE_BINARY" --local-smoke --mode proposed --prover cpu --seed 1 \
+  --np 4 --shipment 16 --epoch-s 60 --epochs 1 \
+  --prepare-policy-manifest "$E3_OUTPUT/e3-local-policy.json"
+export POLICY_MANIFEST="$E3_OUTPUT/e3-local-policy.json"
+# For each mode in the seed-1 order, start a freshly rebuilt stack, then:
+bash scripts/e2_stack.sh up
+python3 scripts/e3_local_warmup.py --out "$E3_OUTPUT/<mode>-warmup.json"
+uv run --python 3.12 python scripts/e3_local_run.py \
+  --binary "$E3_MODE_BINARY" --gate "$E3_OUTPUT/e3-gate-manifest.json" \
+  --policy-manifest "$POLICY_MANIFEST" --mode <mode> \
+  --allocation-root "$EUDR_RUN_ROOT" --out "$E3_OUTPUT/modes/<mode>.json"
+bash scripts/e2_stack.sh down
+# Review and remove this checkout's generated runtime before the next mode.
+uv run --python 3.12 python scripts/e3_local_analyze.py \
+  --raw-dir "$E3_OUTPUT/modes" --out "$E3_OUTPUT/e3-local-analysis.json"
+```
+
+The mode runner records actual workload digest, source revision, gate hash, receipt and observed container IDs. The local analyzer requires all four distinct stacks and the same paired workload, and emits `localComplete`; the formal `e3_analyze.py` rejects these records even with `--allow-partial`. Verify the gate receipt/root and each mode's L1 scope before publishing public summaries. Keep private raw proof, manifests, full logs and signing material outside Git.
+
 ## Trusted configuration before measurement
 
 Trusted manifest preparation invokes SDK setup and workload/issuer preparation. It performs no proving or network posts, but SDK setup can be expensive: prepare it on the actual HPC host, from final reviewed binaries, before timed runs. Select exact epoch IDs, event counts, seeds, axes and unique run IDs up front.

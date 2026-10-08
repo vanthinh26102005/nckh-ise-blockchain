@@ -47,6 +47,9 @@ struct Cli {
     prover: ProverKind,
     #[arg(long, value_enum, default_value_t = Mode::Proposed)]
     mode: Mode,
+    /// One bounded, accelerated CPU workload for paired local E3 acceptance.
+    #[arg(long)]
+    local_smoke: bool,
     #[arg(long)]
     prepare_policy_manifest: Option<std::path::PathBuf>,
 }
@@ -91,6 +94,9 @@ fn main() -> Result<()> {
     {
         bail!("invalid E4 cell axes");
     }
+    if cli.local_smoke {
+        validate_local_smoke(&cli)?;
+    }
     if cli.prepare_policy_manifest.is_none() && matches!(cli.mode, Mode::FabricOnly | Mode::HashOnChain) {
         return run_baseline(cli);
     }
@@ -98,6 +104,28 @@ fn main() -> Result<()> {
         ProverKind::Cpu => run(cli, ProverClient::builder().cpu().build()),
         ProverKind::Cuda => run_cuda(cli),
     }
+}
+
+fn validate_local_smoke(cli: &Cli) -> Result<()> {
+    if !matches!(cli.prover, ProverKind::Cpu)
+        || (cli.np, cli.shipment, cli.epoch_s, cli.epochs, cli.seed) != (4, 16, 60, 1, 1)
+    {
+        bail!("local E3 smoke requires CPU, seed 1, np 4, shipment 16, one 60-second epoch");
+    }
+    let tasks = schedule(cli)?;
+    let events: usize = tasks.iter().flatten().map(|task| task.events.len()).sum();
+    let shipments = tasks.iter().flatten().filter(|task| task.shipment_end).count();
+    if !(8..=16).contains(&events) || shipments != 1 {
+        bail!("local E3 smoke requires one shipment of 8..16 actual generated events; got {events} events in {shipments} shipments");
+    }
+    let checkout = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors().nth(3).context("locate E3 Git checkout")?.canonicalize()?;
+    let status = std::process::Command::new("git").args(["status", "--porcelain"])
+        .current_dir(checkout).output().context("inspect source checkout")?;
+    if !status.status.success() || !status.stdout.is_empty() {
+        bail!("local E3 smoke requires a clean source checkout");
+    }
+    Ok(())
 }
 
 #[cfg(feature = "cuda")]
@@ -121,6 +149,7 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
     if let Some(path)=&cli.prepare_policy_manifest {
         if path.exists() { bail!("policy manifest output exists"); }
         let value=json!({"protocolVersion":2,"sourceRevision":sp1_e2e::source_revision(),"syntheticFixture":true,"seed":cli.seed,
+            "validationKind":if cli.local_smoke {"local-smoke"} else {"formal"},
             "certificateRoot":bytes32(registry.root()),"polygonCommitment":bytes32(eudr_policy::polygon_commitment(&registry.polygon,registry.polygon_nonce)),
             "leafProgramVKey":leaf_key.verifying_key().bytes32(),"aggregateProgramVKey":epoch_key.verifying_key().bytes32(),
             "leafVKeyDigest":bytes32(leaf_key.verifying_key().hash_bytes()),"aggregateVKeyDigest":bytes32(epoch_key.verifying_key().hash_bytes()),
@@ -168,7 +197,7 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
     let (sender, receiver) = mpsc::sync_channel(32);
     let producer_stop = stop.clone();
     let producer =
-        thread::spawn(move || produce(tasks, fabric, sender, started, deadline, producer_stop));
+        thread::spawn(move || produce(tasks, fabric, sender, started, deadline, producer_stop, cli.local_smoke));
 
     let archive=std::env::var("EUDR_PRIVATE_ARCHIVE").ok().map(std::path::PathBuf::from);
     if let Some(path)=&archive { if !path.is_absolute() || path.starts_with(std::env::current_dir()?) || path.exists() {bail!("private archive must be a fresh absolute directory outside workspace");} std::fs::create_dir_all(path)?; }
@@ -379,6 +408,8 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
             "transactions": transactions,
             "host": sp1_e2e::compute_host().map_err(|e|anyhow!(e))?,
         "protocolVersion": 2, "sourceRevision": sp1_e2e::source_revision(), "workload_digest": workload_digest,
+        "validationKind":if cli.local_smoke {"local-smoke"} else {"formal"},
+        "pacing":if cli.local_smoke {"accelerated"} else {"poisson-paced"},
         "registryPair": {"certificateRoot": bytes32(registry.root()),"polygonCommitment": bytes32(eudr_policy::polygon_commitment(&registry.polygon,registry.polygon_nonce))},
         "registryManifestSHA256":std::env::var("POLICY_MANIFEST").ok().and_then(|p|std::fs::read(p).ok()).map(|b|hex::encode(Sha256::digest(b))),
         "verificationKind": "sp1-groth16", "syntheticFixture": true,
@@ -425,7 +456,7 @@ fn run_baseline(cli: Cli) -> Result<()> {
     let (sender, receiver) = mpsc::sync_channel(32);
     let producer_stop = stop.clone();
     let producer =
-        thread::spawn(move || produce(tasks, fabric, sender, started, deadline, producer_stop));
+        thread::spawn(move || produce(tasks, fabric, sender, started, deadline, producer_stop, cli.local_smoke));
     let mut digest = Sha256::new();
     let mut pending_events = 0_usize;
     let mut pending_since = None;
@@ -534,6 +565,8 @@ fn run_baseline(cli: Cli) -> Result<()> {
             "gas_samples": gas, "calldata_samples": calldata, "transactions": transactions,
             "host": sp1_e2e::compute_host().map_err(|e|anyhow!(e))?,
             "protocolVersion": 2, "sourceRevision": sp1_e2e::source_revision(), "workload_digest": workload_digest,
+            "validationKind":if cli.local_smoke {"local-smoke"} else {"formal"},
+            "pacing":if cli.local_smoke {"accelerated"} else {"poisson-paced"},
             "registryManifestSHA256":std::env::var("POLICY_MANIFEST").ok().and_then(|p|std::fs::read(p).ok()).map(|b|hex::encode(Sha256::digest(b))),
             "verificationKind": if cli.mode==Mode::HashOnChain { "hash-on-chain" } else { "fabric-only" }, "syntheticFixture": true,
             "rng": "ChaCha20Rng seed from e2-bench workload",
@@ -558,6 +591,7 @@ fn produce(
     started: Instant,
     deadline: Option<Instant>,
     stop: Arc<AtomicBool>,
+    accelerated: bool,
 ) -> Result<()> {
     let total = tasks.iter().map(Vec::len).sum::<usize>();
     let workers = FABRIC_WORKERS.min(total.max(1));
@@ -587,19 +621,19 @@ fn produce(
                     if !wait_for_window(index,&released,&stop,deadline) {return;}
                     let result: Result<()> = (|| {
                         for (event, due_ms) in leaf.events.iter().zip(&leaf.due_ms) {
-                            let due = started + Duration::from_millis(*due_ms);
-                            loop {
-                                if stop.load(Ordering::Relaxed)
-                                    || deadline.is_some_and(|end| Instant::now() >= end)
-                                {
-                                    stop.store(true,Ordering::Relaxed);
-                                    return Ok(());
-                                }
-                                match due.checked_duration_since(Instant::now()) {
-                                    Some(wait) => {
-                                        thread::sleep(wait.min(Duration::from_millis(100)))
+                            if !accelerated {
+                                let due = started + Duration::from_millis(*due_ms);
+                                loop {
+                                    if stop.load(Ordering::Relaxed)
+                                        || deadline.is_some_and(|end| Instant::now() >= end)
+                                    {
+                                        stop.store(true,Ordering::Relaxed);
+                                        return Ok(());
                                     }
-                                    None => break,
+                                    match due.checked_duration_since(Instant::now()) {
+                                        Some(wait) => thread::sleep(wait.min(Duration::from_millis(100))),
+                                        None => break,
+                                    }
                                 }
                             }
                             gateway.post_event(&event.event_bytes)?;
@@ -772,6 +806,7 @@ mod tests {
             seed: 17,
             wall_time_s: None,
             prepare_policy_manifest: None,
+            local_smoke: false,
             fabric_gateway: "http://127.0.0.1:8080".to_string(),
             anchor_server: "http://127.0.0.1:8546".to_string(),
             prover: ProverKind::Cpu,
