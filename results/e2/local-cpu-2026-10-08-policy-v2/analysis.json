@@ -1,0 +1,172 @@
+{
+  "experiment": "E2 real Fabric acknowledgement to Anvil receipt",
+  "protocolVersion": 2,
+  "validationKind": "local-smoke",
+  "formalComplete": false,
+  "localComplete": true,
+  "evidenceClass": "local-smoke",
+  "nonformalReasons": [
+    "local-smoke cannot be formal evidence",
+    "accelerated/pilot pacing",
+    "formal workload requires 480 events/min, 60 minutes and exactly 30 seeds"
+  ],
+  "run": {
+    "acceptedPolicies": [
+      {
+        "certificateRoot": "0x0d8517a2ab26e34816d1f948a6c8feeb9c87ae142309d238c76919313ddf16b0",
+        "polygonCommitment": "0xec01c44250404ddafe1f40f592ab82d5b2e28f0448976856918a640f2eacf235"
+      }
+    ],
+    "computeHost": "MacBook-Pro-cua-HuxTris.local",
+    "durationMin": 1.0,
+    "kind": "run",
+    "lambdaEventsPerMin": 16.0,
+    "lotIdentityDomain": "run_id * 1000000000 + seed * 1000000 + lot ordinal; fresh workload domains",
+    "metric": "last Fabric commit acknowledgement to Anvil transaction receipt",
+    "mode": "accelerated-pilot",
+    "policyVersion": 2,
+    "preflight": {
+      "anchorServer": "http://127.0.0.1:8546",
+      "anvilRpc": "http://127.0.0.1:8545",
+      "computeHost": "MacBook-Pro-cua-HuxTris.local",
+      "fabricGateway": "http://127.0.0.1:8080",
+      "gpuUnavailableReason": "CPU-only local smoke; NVIDIA CUDA measurements are not available on this host",
+      "hardware": {
+        "cpu_logical": 8,
+        "cpu_model": "Apple M1 Pro",
+        "cuda_toolkit": "N/A",
+        "gpu_model_driver": "N/A",
+        "hostname": "MacBook-Pro-cua-HuxTris.local",
+        "os": "macOS-26.5-arm64-arm-64bit",
+        "ram_bytes": 34359738368
+      },
+      "kind": "e2_preflight",
+      "protocolVersion": 2,
+      "prover": "cpu",
+      "software": {
+        "cargo": "cargo 1.97.0-nightly (4d1f98451 2026-05-15)",
+        "rustc": "rustc 1.97.0-nightly (e50aa6fba 2026-05-19)",
+        "sp1_version": "6.4.0"
+      },
+      "sourceRevision": "773d9a02fad2cb9966c7bcaf8239a4af19283996",
+      "topology": {
+        "anvilChainId": "0x7a69",
+        "anvilClientVersion": "anvil/v1.5.1",
+        "fabricContainers": {
+          "e2-orderer1.example.com": {
+            "id": "7e57c07ee3963d1f6e9c312f7dd51274837930998193ead9f7cadc2e9eba7bf8",
+            "image": "hyperledger/fabric-orderer:2.5.16"
+          },
+          "e2-orderer2.example.com": {
+            "id": "f66ef0140ba2f9add3b52c62b7bb4d2f73ace6d0bf6c45f43ee3390e2b9b5c47",
+            "image": "hyperledger/fabric-orderer:2.5.16"
+          },
+          "e2-orderer3.example.com": {
+            "id": "fa190f2349f0f3e0a5ca7b8b820ed1756410f8159de2a0b7cb2ccfd4ee90d29c",
+            "image": "hyperledger/fabric-orderer:2.5.16"
+          },
+          "e2-peer0.org1.example.com": {
+            "id": "3bcf622cc35b6b23786e4b426939854100871a9699e1a84d13c2f125bf170a7e",
+            "image": "hyperledger/fabric-peer:2.5.16"
+          },
+          "e2-peer0.org2.example.com": {
+            "id": "12428258614d05378f435e8436782128f1f39b0ff5bc89c8ed961c53cd4899d3",
+            "image": "hyperledger/fabric-peer:2.5.16"
+          }
+        }
+      },
+      "validationKind": "local-smoke"
+    },
+    "preflightFileSHA256": "db06da75acf6d6bf93c146eff62e420135ad420d8ac04eba0212b570fff36f8b",
+    "preflightRecordSHA256": "ad8f9bbfc8fac9eb15878609c356c531d9e87225724521461f43a2d925d9841a",
+    "protocolVersion": 2,
+    "prover": "cpu",
+    "queueCapacity": 1,
+    "queuePolicy": "bounded; record and drop saturated acknowledged lots, continue offered stream",
+    "queueWaitTimeoutSec": 1.0,
+    "registryBuiltBeforeProducer": true,
+    "registry_manifest_sha256": "9fac8d7238fd6db6a5ca313db6c5da417fa7fdb82a9c9cc5421fba82fdc37ab8",
+    "runId": 20261008,
+    "seeds": 1,
+    "setupExcludedFromProofTiming": true,
+    "sourceDirty": false,
+    "sourceRevision": "773d9a02fad2cb9966c7bcaf8239a4af19283996",
+    "sp1SdkVersion": "6.4.0",
+    "validationKind": "local-smoke"
+  },
+  "aggregate": {
+    "scheduledLots": 1,
+    "scheduledEvents": 9,
+    "recordedLots": 1,
+    "anchoredLots": 1,
+    "failedLots": 0,
+    "unrecordedLots": 0,
+    "completionRate": 1.0,
+    "saturatedLots": 0,
+    "saturationRate": 0.0,
+    "medianMs": 1614431.0,
+    "iqrMs": [
+      1614431.0,
+      1614431.0
+    ],
+    "p95Ms": 1614431.0,
+    "p99Ms": 1614431.0,
+    "meanMs": 1614431.0,
+    "latenciesConditionedOnAnchoredLots": true,
+    "terminal": null
+  },
+  "perSeed": {
+    "1": {
+      "scheduledLots": 1,
+      "scheduledEvents": 9,
+      "recordedLots": 1,
+      "anchoredLots": 1,
+      "failedLots": 0,
+      "unrecordedLots": 0,
+      "completionRate": 1.0,
+      "saturatedLots": 0,
+      "saturationRate": 0.0,
+      "medianMs": 1614431.0,
+      "iqrMs": [
+        1614431.0,
+        1614431.0
+      ],
+      "p95Ms": 1614431.0,
+      "p99Ms": 1614431.0,
+      "meanMs": 1614431.0,
+      "latenciesConditionedOnAnchoredLots": true,
+      "terminal": {
+        "anchoredEvents": 9,
+        "anchoredLots": 1,
+        "committedEvents": 9,
+        "committedLots": 1,
+        "durationSec": 1632.993903084,
+        "failure": null,
+        "kind": "seed_terminal",
+        "maxQueueDepth": 1,
+        "offeredEvents": 9,
+        "offeredLots": 1,
+        "producerDurationSec": 18.390334125,
+        "provedEvents": 9,
+        "provedLots": 1,
+        "queuedLots": 1,
+        "readbackEvents": 9,
+        "readbackLots": 1,
+        "receivedLots": 1,
+        "runId": 20261008,
+        "saturatedLots": 0,
+        "scheduledEvents": 9,
+        "scheduledLots": 1,
+        "seed": 1,
+        "status": "complete"
+      }
+    }
+  },
+  "seedStatisticCI95Ms": {
+    "medianMs": null,
+    "p95Ms": null,
+    "p99Ms": null
+  },
+  "confidenceIntervalMethod": "2000 percentile bootstrap samples of seeds, mean of each per-seed statistic, deterministic seed 2; missing-latency seeds excluded only from latency CI",
+  "verificationBoundary": "accounting and trusted manifest metadata; runner verifies SP1/Anvil receipts, analyzer does not re-query the chain"
+}
