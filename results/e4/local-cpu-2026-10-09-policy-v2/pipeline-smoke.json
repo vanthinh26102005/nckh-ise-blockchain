@@ -1,0 +1,38 @@
+{
+  "validationKind": "synthetic-pipeline-smoke",
+  "costConverter": {
+    "kind": "gas-to-USD execution cost estimate",
+    "scope": "estimate under supplied assumptions; not actual paid mainnet fees; excludes separate L1/L2 data fees",
+    "gas_used": "1000",
+    "eth_usd": "2000",
+    "assumptions_date": "2026-10-09",
+    "source": "synthetic-test-fixture",
+    "formula": "gas_used * gas_gwei * 1e-9 * ETH_USD",
+    "scenarios": [
+      {
+        "scenario": "low",
+        "gas_gwei": "1",
+        "eth": "0.000001000",
+        "usd": "0.002"
+      },
+      {
+        "scenario": "mid",
+        "gas_gwei": "2",
+        "eth": "0.000002000",
+        "usd": "0.004"
+      },
+      {
+        "scenario": "high",
+        "gas_gwei": "3",
+        "eth": "0.000003000",
+        "usd": "0.006"
+      }
+    ]
+  },
+  "figure2": {
+    "kind": "synthetic-pipeline-smoke",
+    "populatedTexSha256": "98b10831e9b38bd4e2be84d4b21ed6f4d4dd5e45a5d03bcd026f42711d7d31ce",
+    "pgfplotsTexGenerated": true,
+    "formalFigure": false
+  }
+}
