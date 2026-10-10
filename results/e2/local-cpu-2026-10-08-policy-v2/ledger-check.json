@@ -1,0 +1,43 @@
+{
+  "kind": "e2_independent_fabric_readback",
+  "eventsVerified": 9,
+  "allCanonicalBytes86": true,
+  "rows": [
+    {
+      "eventId": "20261008001000000",
+      "sha256": "c495d5e8005cff2caed071abf901ab4ad9abf3c1fbd77fff2042768f59c6a02c"
+    },
+    {
+      "eventId": "20261008001000001",
+      "sha256": "2945183e9ea765ea61baa8991390d6a531493a21760b55ec617cacf1c1dd1275"
+    },
+    {
+      "eventId": "20261008001000002",
+      "sha256": "3909ccffb3da5d9b1666f040a89804de1cbbdf111ad1aea657f9098da8c5b61f"
+    },
+    {
+      "eventId": "20261008001000003",
+      "sha256": "329ff733f46c767ce8a7758cc1b2739f67dae2494ef18ce0b4b34586cc35d1e6"
+    },
+    {
+      "eventId": "20261008001000004",
+      "sha256": "09fcbdf79d666a3b0734f5a4b64fc015a4adf470103c1c1e878fbc899fcecc15"
+    },
+    {
+      "eventId": "20261008001000005",
+      "sha256": "12537a563e916ce942802c2d5e5bfb13e067c2e8622211840ce010a86fe087b9"
+    },
+    {
+      "eventId": "20261008001000006",
+      "sha256": "c84a51a60cc9ea22a85d1a6f9aded50d237eea6dd40862a405c9f53e38477c73"
+    },
+    {
+      "eventId": "20261008001000007",
+      "sha256": "2e0b817b5e8d1961b1367369bb5191e40ec015ddfb540f3a6dfe3d695f56d08d"
+    },
+    {
+      "eventId": "20261008001000008",
+      "sha256": "2cdf852d90c8c06789feed38bbeca62c76cc3f8c5bd6ff0760e2f42c9115143d"
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "kind": "e2_preflight",
+  "protocolVersion": 2,
+  "sourceRevision": "773d9a02fad2cb9966c7bcaf8239a4af19283996",
+  "computeHost": "MacBook-Pro-cua-HuxTris.local",
+  "validationKind": "local-smoke",
+  "hardware": {
+    "hostname": "MacBook-Pro-cua-HuxTris.local",
+    "cpu_model": "Apple M1 Pro",
+    "cpu_logical": 8,
+    "ram_bytes": 34359738368,
+    "gpu_model_driver": "N/A",
+    "cuda_toolkit": "N/A",
+    "os": "macOS-26.5-arm64-arm-64bit"
+  },
+  "topology": {
+    "fabricContainers": {
+      "e2-orderer1.example.com": {
+        "id": "7e57c07ee3963d1f6e9c312f7dd51274837930998193ead9f7cadc2e9eba7bf8",
+        "image": "hyperledger/fabric-orderer:2.5.16"
+      },
+      "e2-orderer2.example.com": {
+        "id": "f66ef0140ba2f9add3b52c62b7bb4d2f73ace6d0bf6c45f43ee3390e2b9b5c47",
+        "image": "hyperledger/fabric-orderer:2.5.16"
+      },
+      "e2-orderer3.example.com": {
+        "id": "fa190f2349f0f3e0a5ca7b8b820ed1756410f8159de2a0b7cb2ccfd4ee90d29c",
+        "image": "hyperledger/fabric-orderer:2.5.16"
+      },
+      "e2-peer0.org1.example.com": {
+        "id": "3bcf622cc35b6b23786e4b426939854100871a9699e1a84d13c2f125bf170a7e",
+        "image": "hyperledger/fabric-peer:2.5.16"
+      },
+      "e2-peer0.org2.example.com": {
+        "id": "12428258614d05378f435e8436782128f1f39b0ff5bc89c8ed961c53cd4899d3",
+        "image": "hyperledger/fabric-peer:2.5.16"
+      }
+    },
+    "anvilChainId": "0x7a69",
+    "anvilClientVersion": "anvil/v1.5.1"
+  },
+  "fabricGateway": "http://127.0.0.1:8080",
+  "anvilRpc": "http://127.0.0.1:8545",
+  "anchorServer": "http://127.0.0.1:8546",
+  "software": {
+    "sp1_version": "6.4.0",
+    "rustc": "rustc 1.97.0-nightly (e50aa6fba 2026-05-19)",
+    "cargo": "cargo 1.97.0-nightly (4d1f98451 2026-05-15)"
+  },
+  "prover": "cpu",
+  "gpuUnavailableReason": "CPU-only local smoke; NVIDIA CUDA measurements are not available on this host"
+}

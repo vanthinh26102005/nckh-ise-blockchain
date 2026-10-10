@@ -71,17 +71,41 @@ impl FabricGateway {
     }
 
     pub fn assert_event_was_committed(&self, event: &[u8; 86]) -> Result<()> {
+        self.read_committed_event(event).map(|_| ())
+    }
+
+    /// Read the ledger record and return the exact canonical bytes checked against the submission.
+    pub fn read_committed_event(&self, expected: &[u8; 86]) -> Result<[u8; 86]> {
         let response = self
             .0
-            .request("GET", &format!("/events/{}", event_id(event)), None)?;
-        if response.status != 200 || !response.body.contains(&STANDARD.encode(event)) {
-            bail!(
-                "Fabric ledger query did not return canonical event {}",
-                event_id(event)
-            );
-        }
-        Ok(())
+            .request("GET", &format!("/events/{}", event_id(expected)), None)?;
+        parse_committed_event(&response, expected)
     }
+}
+
+fn parse_committed_event(response: &HttpResponse, expected: &[u8; 86]) -> Result<[u8; 86]> {
+    if response.status != 200 {
+        bail!("Fabric ledger readback failed for event {}: HTTP {}", event_id(expected), response.status);
+    }
+    let record: serde_json::Value = serde_json::from_str(&response.body)
+        .context("parse Fabric ledger event record")?;
+    if record["eventId"].as_str() != Some(event_id(expected).to_string().as_str()) {
+        bail!("Fabric ledger readback event ID differs from submitted event");
+    }
+    let encoded = record["canonicalEvent"].as_str()
+        .ok_or_else(|| anyhow!("Fabric ledger readback omits canonicalEvent"))?;
+    let bytes: [u8; 86] = STANDARD.decode(encoded)
+        .context("decode Fabric ledger canonicalEvent")?
+        .try_into()
+        .map_err(|_| anyhow!("Fabric ledger canonicalEvent is not 86 bytes"))?;
+    if bytes != *expected {
+        bail!("Fabric ledger canonicalEvent differs from submitted event {}", event_id(expected));
+    }
+    let digest = hex::encode(Sha256::digest(bytes));
+    if record["digest"].as_str() != Some(digest.as_str()) {
+        bail!("Fabric ledger digest differs from canonical event {}", event_id(expected));
+    }
+    Ok(bytes)
 }
 
 #[derive(Debug)]
@@ -130,5 +154,27 @@ mod tests {
     fn endpoint_rejects_paths_and_https() {
         assert!(HttpEndpoint::from_url("https://127.0.0.1:8080").is_err());
         assert!(HttpEndpoint::from_url("http://127.0.0.1:8080/path").is_err());
+    }
+
+    #[test]
+    fn ledger_readback_requires_exact_id_bytes_and_digest() {
+        let mut event = [0u8; 86];
+        event[0] = 1;
+        event[8] = 7;
+        let record = serde_json::json!({"eventId":"7","canonicalEvent":STANDARD.encode(event),
+            "digest":hex::encode(Sha256::digest(event))});
+        let response = HttpResponse { status: 200, body: record.to_string() };
+        assert_eq!(parse_committed_event(&response, &event).unwrap(), event);
+        let mut wrong_id = record.clone();
+        wrong_id["eventId"] = serde_json::json!("8");
+        assert!(parse_committed_event(&HttpResponse { status:200, body:wrong_id.to_string() }, &event).is_err());
+        let mut wrong_bytes = record.clone();
+        let mut other = event;
+        other[85] = 1;
+        wrong_bytes["canonicalEvent"] = serde_json::json!(STANDARD.encode(other));
+        assert!(parse_committed_event(&HttpResponse { status:200, body:wrong_bytes.to_string() }, &event).is_err());
+        let mut wrong_digest = record;
+        wrong_digest["digest"] = serde_json::json!("00");
+        assert!(parse_committed_event(&HttpResponse { status:200, body:wrong_digest.to_string() }, &event).is_err());
     }
 }

@@ -1,0 +1,13 @@
+{
+  "kind": "e2_independent_anvil_check",
+  "chainId": "31337",
+  "status": 1,
+  "transactionHash": "0x0e724a313d12836d51bebcdaeeed059c656db214f071983087614a5142a90a14",
+  "blockNumber": 5,
+  "blockHash": "0x209c92316ea7aa2964b45a9e7e45e50f5f3390c975a876600df5f5a5458dcedd",
+  "gasUsed": "322383",
+  "anchor": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
+  "rootAfter": "0x6d3301b2bdb704c7700da162a8746a612746ef8ce7515b20983dbff842722ca2",
+  "rootMatchesReceipt": true,
+  "anchorLogFound": true
+}

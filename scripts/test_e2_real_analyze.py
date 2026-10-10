@@ -17,6 +17,7 @@ def complete_fixture(seeds=30, lots_per_seed=450):
                  "lastScheduledAtMs": 3_599_000, "policy": pair}
                 for seed in range(1, seeds + 1)]
     manifest = {"protocolVersion": 2, "runId": 1, "leafProgramVKey": "0x" + "33" * 32,
+                "sourceRevision":"b"*40,"sourceDirty":False,"validationKind":"formal",
                 "lambdaEventsPerMin": 480.0, "durationMin": 60.0, "seeds": seeds,
                 "acceptedPolicies": [pair], "workloadSeeds": workload}
     raw_manifest = json.dumps(manifest).encode()
@@ -26,6 +27,7 @@ def complete_fixture(seeds=30, lots_per_seed=450):
         "software":{"sp1_version":"6.3.1","rustc":"fixture","cargo":"fixture"},
         "fabricGateway":"http://127.0.0.1:8080","anvilRpc":"http://127.0.0.1:8545","anchorServer":"http://127.0.0.1:8546"}
     rows = [{"kind": "run", "protocolVersion": 2, "policyVersion": 2, "runId": 1,
+             "validationKind":"formal",
              "sourceRevision": "b" * 40, "sourceDirty": False, "mode": "poisson-paced", "lambdaEventsPerMin": 480.0,
              "durationMin": 60.0, "seeds": seeds, "registry_manifest_sha256": hashlib.sha256(raw_manifest).hexdigest(),
              "queueCapacity": 8, "acceptedPolicies": [pair]}, {"kind": "setup", "runId": 1, "policyProgramVKey": manifest["leafProgramVKey"]}]
@@ -39,11 +41,13 @@ def complete_fixture(seeds=30, lots_per_seed=450):
             rows.append({"kind": "lot", "runId": 1, "seed": seed, "lotId": 1_000_000_000 + seed * 1_000_000 + ordinal,
                          "status": "ok", "eventCount": 64, "fabricAcknowledgementToReceiptMs": float(ordinal),
                          "transactionHash": "0x" + f"{seed * 1000 + ordinal:064x}", "gasUsed": "100000",
-                         "protocolVersion": 2, "verificationKind": "sp1-groth16", "policyValid": True, **pair})
+                         "protocolVersion": 2, "verificationKind": "sp1-groth16", "policyValid": True,
+                         "fabricReadback":True, **pair})
         rows.append({"kind": "seed_terminal", "runId": 1, "seed": seed, "status": "complete",
                      "scheduledEvents": lots_per_seed * 64, "scheduledLots": lots_per_seed,
                      "offeredEvents": lots_per_seed * 64, "offeredLots": lots_per_seed,
                      "committedEvents": lots_per_seed * 64, "committedLots": lots_per_seed,
+                     "readbackEvents": lots_per_seed * 64, "readbackLots": lots_per_seed,
                      "queuedLots": lots_per_seed, "receivedLots": lots_per_seed, "provedLots": lots_per_seed,
                      "provedEvents": lots_per_seed * 64, "anchoredLots": lots_per_seed, "anchoredEvents": lots_per_seed * 64,
                      "saturatedLots": 0, "maxQueueDepth": 8, "failure": None, "durationSec": 3601.0,
@@ -52,7 +56,64 @@ def complete_fixture(seeds=30, lots_per_seed=450):
     return rows, manifest, raw_manifest
 
 
+def local_fixture():
+    rows, manifest, _ = complete_fixture(seeds=1, lots_per_seed=1)
+    run = rows[0]
+    run.update(validationKind="local-smoke", mode="accelerated-pilot", prover="cpu",
+               lambdaEventsPerMin=16.0, durationMin=1.0)
+    preflight = run["preflight"]
+    preflight.update(validationKind="local-smoke", prover="cpu",
+                     gpuUnavailableReason="CPU-only local smoke")
+    preflight["hardware"].update(gpu_model_driver="N/A", cuda_toolkit="N/A")
+    run["preflightRecordSHA256"] = hashlib.sha256(json.dumps(preflight,separators=(",",":"),sort_keys=True).encode()).hexdigest()
+    manifest.update(validationKind="local-smoke", lambdaEventsPerMin=16.0, durationMin=1.0)
+    manifest["workloadSeeds"][0].update(scheduledEvents=9, lastScheduledAtMs=55000)
+    plan = next(row for row in rows if row.get("kind") == "seed_plan")
+    plan.update(scheduledEvents=9, lastScheduledAtMs=55000)
+    lot = next(row for row in rows if row.get("kind") == "lot")
+    lot["eventCount"] = 9
+    terminal = next(row for row in rows if row.get("kind") == "seed_terminal")
+    for key in ("scheduledEvents","offeredEvents","committedEvents","readbackEvents","provedEvents","anchoredEvents"):
+        terminal[key] = 9
+    terminal["producerDurationSec"] = 1.0
+    raw_manifest = json.dumps(manifest).encode()
+    run["registry_manifest_sha256"] = hashlib.sha256(raw_manifest).hexdigest()
+    return rows, manifest, raw_manifest
+
+
 class E2AccountingTests(unittest.TestCase):
+    def test_local_cpu_smoke_passes_only_local_gate(self):
+        rows, manifest, raw = local_fixture()
+        result = analyzer.analyze_records(rows, policy_manifest=manifest,
+                                          policy_manifest_bytes=raw, expected_seeds=1, allow_partial=True)
+        self.assertEqual(result["evidenceClass"], "local-smoke")
+        self.assertTrue(result["localComplete"])
+        self.assertFalse(result["formalComplete"])
+        with self.assertRaisesRegex(ValueError, "never formal"):
+            analyzer.analyze_records(rows, policy_manifest=manifest, policy_manifest_bytes=raw,
+                                     expected_seeds=1)
+        with self.assertRaisesRegex(ValueError, "formal GPU gate"):
+            analyzer.validate_preflight_record(rows[0]["preflight"])
+
+    def test_local_missing_terminal_and_source_mismatch_are_rejected(self):
+        rows, manifest, raw = local_fixture()
+        partial = [row for row in rows if row.get("kind") != "seed_terminal"]
+        result = analyzer.analyze_records(partial, policy_manifest=manifest,
+                                          policy_manifest_bytes=raw, expected_seeds=1, allow_partial=True)
+        self.assertFalse(result["localComplete"])
+        rows[0]["sourceRevision"] = "c"*40
+        with self.assertRaises(ValueError):
+            analyzer.analyze_records(rows, policy_manifest=manifest,
+                                     policy_manifest_bytes=raw, expected_seeds=1, allow_partial=True)
+
+    def test_success_cannot_claim_a_lot_without_fabric_readback(self):
+        rows, manifest, raw = local_fixture()
+        lot = next(row for row in rows if row.get("kind") == "lot")
+        lot.pop("fabricReadback")
+        with self.assertRaisesRegex(ValueError, "readback evidence"):
+            analyzer.analyze_records(rows, policy_manifest=manifest,
+                                     policy_manifest_bytes=raw, expected_seeds=1, allow_partial=True)
+
     def test_complete_formal_run_reports_p99_and_seed_bootstrap_interval(self):
         rows, manifest, raw = complete_fixture()
         result = analyzer.analyze_records(rows, policy_manifest=manifest, policy_manifest_bytes=raw)

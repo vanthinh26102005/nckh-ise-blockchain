@@ -45,6 +45,37 @@ ANVIL_RPC=http://127.0.0.1:18545 node contracts/test/anvil_policy_server_test.mj
 
 Their `contract-stub-test` output proves contract rejection behavior, not SP1 proof verification or a formal gate. The server test also mines a hash-only baseline receipt, labeled `hash-on-chain`.
 
+## E2 CPU local acceptance
+
+Run in a clean, dedicated checkout whose parent directory is the private `EUDR_RUN_ROOT`. The `--local-smoke` entrypoint checks the **actual generated canonical-event count** is 8–16, requires one seed, CPU, accelerated pacing, a bounded queue and an observed local preflight. A Poisson rate by itself is not an event cap. Use fresh output paths and a unique run ID; never use this output for the formal RQ2 table.
+
+```sh
+export EUDR_RUN_ROOT="$(dirname "$PWD")"
+export E2_OUTPUT="$EUDR_RUN_ROOT/output"
+export E2_RUN_ID=$(date +%s)
+export POLICY_MANIFEST="$E2_OUTPUT/e2-local-policy.json"
+export ANVIL_IMAGE=ghcr.io/foundry-rs/foundry:stable
+docker pull "$ANVIL_IMAGE"
+npm ci --prefix contracts
+cargo build --locked --release --manifest-path crates/sp1-e2e/Cargo.toml -p sp1-e2e --bin e2_real_benchmark
+crates/sp1-e2e/target/release/e2_real_benchmark --local-smoke --accelerated --prover cpu \
+  --lambda-events-per-min 16 --duration-min 1 --seeds 1 --run-id "$E2_RUN_ID" \
+  --queue-capacity 1 --queue-wait-timeout-sec 1 \
+  --prepare-policy-manifest "$POLICY_MANIFEST"
+bash scripts/e2_stack.sh up
+uv run --python 3.12 python scripts/e2_preflight.py --local-smoke \
+  --source-revision "$(git rev-parse HEAD)" --out "$E2_OUTPUT/e2-local-preflight.json"
+POLICY_MANIFEST="$POLICY_MANIFEST" crates/sp1-e2e/target/release/e2_real_benchmark \
+  --local-smoke --accelerated --prover cpu --lambda-events-per-min 16 --duration-min 1 \
+  --seeds 1 --run-id "$E2_RUN_ID" --queue-capacity 1 --queue-wait-timeout-sec 1 \
+  --preflight "$E2_OUTPUT/e2-local-preflight.json" --out "$E2_OUTPUT/e2-local.jsonl"
+uv run --python 3.12 python scripts/e2_real_analyze.py \
+  --raw "$E2_OUTPUT/e2-local.jsonl" --policy-manifest "$POLICY_MANIFEST" \
+  --expected-seeds 1 --allow-partial --out "$E2_OUTPUT/e2-local-analysis.json"
+```
+
+Check `localComplete=true`, every lot `fabricReadback=true`, the mined SP1 receipt and the final Fabric/Anvil root transition before calling this local pass. The runtime records an exact ledger readback of every event after Fabric acknowledgement and before proving. Preserve output and logs, then run `bash scripts/e2_stack.sh down` only for the stack owned by this checkout. The local preflight marks GPU/CUDA `N/A` with a reason and is rejected by the formal preflight gate; `make e2` remains the separate paced 480/60/30 campaign.
+
 ## Trusted configuration before measurement
 
 Trusted manifest preparation invokes SDK setup and workload/issuer preparation. It performs no proving or network posts, but SDK setup can be expensive: prepare it on the actual HPC host, from final reviewed binaries, before timed runs. Select exact epoch IDs, event counts, seeds, axes and unique run IDs up front.
