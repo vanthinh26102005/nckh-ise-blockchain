@@ -1,0 +1,77 @@
+{
+  "experiment": "E4",
+  "validationKind": "e4-local-smoke",
+  "formalComplete": false,
+  "gpuCuda": null,
+  "gpuCudaReason": "Apple M1 Pro local CPU; CUDA GPU preflight unavailable",
+  "sourceRevision": "d4200141b8aed5f23f67ea8c5f602b925f72afc2",
+  "host": "MacBook-Pro-cua-HuxTris.local",
+  "epochs": 4,
+  "events": 48,
+  "shipments": 4,
+  "lots": 4,
+  "completion_rate": 1.0,
+  "throughput_events_per_s": 0.006459512190182645,
+  "throughput_shipments_per_min": 0.032297560950913226,
+  "elapsed_s": 7430.901682166,
+  "leaf_proving_ms": {
+    "mean": 696484.5,
+    "median": 722530.5,
+    "min": 572186.0,
+    "max": 768691.0
+  },
+  "aggregate_proving_ms": {
+    "mean": 1154356.25,
+    "median": 1154872.5,
+    "min": 1044850.0,
+    "max": 1262830.0
+  },
+  "audit_latency_ms": {
+    "mean": 4721074.0,
+    "median": 4747517.5,
+    "min": 1976700.0,
+    "max": 7412561.0
+  },
+  "gas_total": 1205168.0,
+  "gas_per_shipment": 301292.0,
+  "calldata_bytes_total": 3728.0,
+  "calldata_bytes_per_shipment": 932.0,
+  "receipts": [
+    {
+      "epochId": "3000",
+      "transactionHash": "0x810f6a2b8c8a361940ee2cd2c4079b46a540139cf0443b590de4059213a9dc02",
+      "status": 1,
+      "eventCount": "13",
+      "lotCount": "1",
+      "oldNullifierRoot": "0x1a8917f23b86dd549f86854cfb01e45ea09dab7a725e9ec64df653c16a3bf2be",
+      "newNullifierRoot": "0x689d6c1158691e530d1baa5c08bf2f8be366d592b0f38905fca31883d742dca1"
+    },
+    {
+      "epochId": "3001",
+      "transactionHash": "0x293cda94a428db2fc5c2167c044b2c6c17de6437eab1c763f401eca73cf00c83",
+      "status": 1,
+      "eventCount": "14",
+      "lotCount": "1",
+      "oldNullifierRoot": "0x689d6c1158691e530d1baa5c08bf2f8be366d592b0f38905fca31883d742dca1",
+      "newNullifierRoot": "0x590b6e8512b7588280730edf290e6313fa9852f41a0fc15a44db3c67394f032b"
+    },
+    {
+      "epochId": "3002",
+      "transactionHash": "0x862882c2893e719012715981a1ed84fb4b8c9e9b2481e8fcec153b63cffab525",
+      "status": 1,
+      "eventCount": "12",
+      "lotCount": "1",
+      "oldNullifierRoot": "0x590b6e8512b7588280730edf290e6313fa9852f41a0fc15a44db3c67394f032b",
+      "newNullifierRoot": "0x670909da76d5fd8022f9f74a0b484398ecafacab15d7a4c675c6cf3c412da76a"
+    },
+    {
+      "epochId": "3003",
+      "transactionHash": "0x59a4259592f8a5be82c1b133234e35ebcdbcdbfe00bb5d3c0bbdbda07c1c59e2",
+      "status": 1,
+      "eventCount": "9",
+      "lotCount": "1",
+      "oldNullifierRoot": "0x670909da76d5fd8022f9f74a0b484398ecafacab15d7a4c675c6cf3c412da76a",
+      "newNullifierRoot": "0x7256990e79447bb7ef87969c4f5b184adef709e267765fb526a70e1834fdbd83"
+    }
+  ]
+}

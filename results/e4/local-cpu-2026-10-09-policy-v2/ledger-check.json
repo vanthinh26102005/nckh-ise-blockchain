@@ -1,0 +1,200 @@
+{
+  "kind": "independent_fabric_e4_readback",
+  "count": 48,
+  "events": [
+    {
+      "eventId": 600000,
+      "sha256": "5dd946d718692154dbf304cfe0292fbcba3dc79437fc0eda9a01bdc919d63b12"
+    },
+    {
+      "eventId": 600001,
+      "sha256": "330835115b509a7f5afa9c184012d6d9b36ea39128952fd7555005df358d2c51"
+    },
+    {
+      "eventId": 600002,
+      "sha256": "a731ed19408efd206ce1199cac735262bf74f22122961d675a2443e2905811d8"
+    },
+    {
+      "eventId": 600003,
+      "sha256": "cf258b44a036c6b50a27981100cd3d2aab07d85e7d78cbb796bb99fa29f13ba5"
+    },
+    {
+      "eventId": 600004,
+      "sha256": "a4c099bf391c5183dc51b1da709cfe796d077289a49ddbe1c74f15ae6eb85383"
+    },
+    {
+      "eventId": 600005,
+      "sha256": "08cf682d4286da9476a14c09fad48dde0b94b113a9883c3d28720ebacc637bd6"
+    },
+    {
+      "eventId": 600006,
+      "sha256": "f1673ce27ad78a511a0d2015448f8c241ce23d2a61ec413d7218437af44d6980"
+    },
+    {
+      "eventId": 600007,
+      "sha256": "bfe3d4a74df5c0bc3761c6c6bfb558ee85b2014b020eaa179d8dea88d17fa2a3"
+    },
+    {
+      "eventId": 600008,
+      "sha256": "24c2bcba1cac7b27f474caee646e97ffad4da9482010d8e3cee3fe2b30c98971"
+    },
+    {
+      "eventId": 600009,
+      "sha256": "c149e436e9b764cd5d272c84881d8e33dfcec300c9ac2f51d002bbd21cc98334"
+    },
+    {
+      "eventId": 600010,
+      "sha256": "8d8022907be4a0f3c965c5abe526e44ec248df71b2d33c3feefa665818cefb25"
+    },
+    {
+      "eventId": 600011,
+      "sha256": "396725e7c4db0ca9c33654ca44003ce3058276591b6cef6d6512527e0bf3218a"
+    },
+    {
+      "eventId": 600012,
+      "sha256": "5bc71d1898181509ef24c10032c2bb4ae8b7913166d407781d4728694468c067"
+    },
+    {
+      "eventId": 600013,
+      "sha256": "01681a1b96ebd3adc3adeec7b0b4f9880ba94bbe2c2c29bdaf2208489863b2c9"
+    },
+    {
+      "eventId": 600014,
+      "sha256": "05cf7fce1e2b586c7522a5f71d6853d6323d956c07a73320d0df955be1ecc4f2"
+    },
+    {
+      "eventId": 600015,
+      "sha256": "1642e2ac05d28544c93fede0f537bcdbe4795ef0886e8410a4be4117bd89a1d8"
+    },
+    {
+      "eventId": 600016,
+      "sha256": "9055ff48bf0982c9999c60371a36db8b078f1729113129434d7b80edc3086b5e"
+    },
+    {
+      "eventId": 600017,
+      "sha256": "765a056fa100afdfa955ca6826b50d783c763804e9b6081198112e2f387ff190"
+    },
+    {
+      "eventId": 600018,
+      "sha256": "b037d82c1f9dcc8287f6c2bb25346634e99e9894bf8d41205d3609c960d156b5"
+    },
+    {
+      "eventId": 600019,
+      "sha256": "861bfa49b85a04551d1ce1c3ab52139a2cc3cdc50eec7b49fc74c0ce1350d56f"
+    },
+    {
+      "eventId": 600020,
+      "sha256": "5b942b64e1ac6b3fc95d54fe56ff40bb266a27ef71a71e29de53ac86c7ccee33"
+    },
+    {
+      "eventId": 600021,
+      "sha256": "12bfaeae98ac5b79ec0498aab454898da92dab2964dec3eed02bd4444d07e44d"
+    },
+    {
+      "eventId": 600022,
+      "sha256": "5000ec6001bb8428ebc6e3cc13c8771a8cb689bfe51bc7b75d6490fd5ffbe2cf"
+    },
+    {
+      "eventId": 600023,
+      "sha256": "18efcd8cc4054743d6c73f4f7de99a414e14dbaff8350d444c115fd70629a5b5"
+    },
+    {
+      "eventId": 600024,
+      "sha256": "df3fb4040e2d7a11537dfb73c723866cd17ba3f628b2bd13b48d9d7dada7af3e"
+    },
+    {
+      "eventId": 600025,
+      "sha256": "2d3b670eeff8a1115450e4c331bca3c6870092f956acf60a4de5a00621c2c005"
+    },
+    {
+      "eventId": 600026,
+      "sha256": "5fa033317fe9f0343bf4aed259ca60b1543a68f73f8c8a6756ec403b4847b5a1"
+    },
+    {
+      "eventId": 600027,
+      "sha256": "8f5473cfcbcdbd3a7501ee1cde1d7d910721cdf1a337fbc79710f02d9f037a74"
+    },
+    {
+      "eventId": 600028,
+      "sha256": "42a676be6867c29501db4d309595f5b887df70c66c7f2c2bbed700cb41dbe0ad"
+    },
+    {
+      "eventId": 600029,
+      "sha256": "ba52fe1d0c55c60bb66993df9f93c348dc9c9e916246526f9161d4688c6410bc"
+    },
+    {
+      "eventId": 600030,
+      "sha256": "a1993b7e2fffdb1bb60a167971dc0898744e7673424379572a2a43b3d8fcec6a"
+    },
+    {
+      "eventId": 600031,
+      "sha256": "3a1b50c34718aa30b25d5ca6ed6b0aa7767daba2bd6b2d5e9211d03c13d8c110"
+    },
+    {
+      "eventId": 600032,
+      "sha256": "15706417d5f62646823300d811a437294d246ada8fae1f902e709b1ec6df1a17"
+    },
+    {
+      "eventId": 600033,
+      "sha256": "70e759e32b298b911a549d8dae9139fbfdf826fed3c59454c8341ddbcc4f395f"
+    },
+    {
+      "eventId": 600034,
+      "sha256": "990db6654564f4fef2ef6fe8f1f406cd0472aec8998c13f3c7a5083cf2bfe906"
+    },
+    {
+      "eventId": 600035,
+      "sha256": "5a0411afc01ef1e750e2722c49e15517fb66ec398ead34586df4efc89c1079ef"
+    },
+    {
+      "eventId": 600036,
+      "sha256": "c51a87e1223be0860529dd190c656b69b3b89591a8a0806ffa3c4aded935ba42"
+    },
+    {
+      "eventId": 600037,
+      "sha256": "3e30b1c2fe3f8894ec0d330c13e16afc03f5a4959fa856d81fbaaf963b2bc066"
+    },
+    {
+      "eventId": 600038,
+      "sha256": "b66e9f52c304b4e942a7169a8f49e2f63242e3dcbf23e9a7a85ba9be1bbfb0a1"
+    },
+    {
+      "eventId": 600039,
+      "sha256": "a72c238c0afe3c09e28fb98b60314c472594f25fbc469351bfc95cbb4b6771d2"
+    },
+    {
+      "eventId": 600040,
+      "sha256": "6ca9c46d65fe6d8aefb1686bb57b8d937e08cd4208710e8f7c0453592d538a9d"
+    },
+    {
+      "eventId": 600041,
+      "sha256": "dc6935ebf54b9c30c7471bbcc6dd66c6cd231bddb4af424b0f268faadcefbde3"
+    },
+    {
+      "eventId": 600042,
+      "sha256": "8b451c01706c0f5264c2fb1ce10fbdda26be44946751805c20a2ec554abccf9f"
+    },
+    {
+      "eventId": 600043,
+      "sha256": "a0fafa900955a7671aa31ca2d9594eb159311b254d127983d46083b7aa38e274"
+    },
+    {
+      "eventId": 600044,
+      "sha256": "79f770a5925a6596c6c218a5c20fa88b539d5547246d8fc88a517ca14788e761"
+    },
+    {
+      "eventId": 600045,
+      "sha256": "e628a345e4251aab59c184d10650236b53cb3bbd23107cee24f736f1d74952a6"
+    },
+    {
+      "eventId": 600046,
+      "sha256": "85b35af4f6b69773b91e0323a1a2d9df7750161ec0d754cab08c47b6cbd4c58f"
+    },
+    {
+      "eventId": 600047,
+      "sha256": "680991ceabaa4b357c61e4d75c16da8b4f3642aafbfd4c0a4c45b6baccd05aae"
+    }
+  ],
+  "verified": true,
+  "excludedWarmupEventId": "9223372036854775807"
+}

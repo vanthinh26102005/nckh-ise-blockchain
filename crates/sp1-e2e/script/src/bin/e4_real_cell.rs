@@ -50,6 +50,9 @@ struct Cli {
     /// One bounded, accelerated CPU workload for paired local E3 acceptance.
     #[arg(long)]
     local_smoke: bool,
+    /// Four nonempty bounded epochs on one CPU; accelerated ingestion for local E4 validation.
+    #[arg(long, conflicts_with = "local_smoke")]
+    e4_local_smoke: bool,
     #[arg(long)]
     prepare_policy_manifest: Option<std::path::PathBuf>,
 }
@@ -97,6 +100,9 @@ fn main() -> Result<()> {
     if cli.local_smoke {
         validate_local_smoke(&cli)?;
     }
+    if cli.e4_local_smoke {
+        validate_e4_local_smoke(&cli)?;
+    }
     if cli.prepare_policy_manifest.is_none() && matches!(cli.mode, Mode::FabricOnly | Mode::HashOnChain) {
         return run_baseline(cli);
     }
@@ -128,6 +134,30 @@ fn validate_local_smoke(cli: &Cli) -> Result<()> {
     Ok(())
 }
 
+fn validate_e4_local_smoke(cli: &Cli) -> Result<()> {
+    if !matches!(cli.prover, ProverKind::Cpu) || cli.mode != Mode::Proposed
+        || cli.epochs != 4 || cli.shipment != 16 || cli.np > 8 || cli.epoch_s > 60
+    {
+        bail!("local E4 smoke requires CPU proposed, four epochs, shipment 16, np <= 8 and epoch <= 60 s");
+    }
+    let tasks = schedule(cli)?;
+    for (index, epoch) in tasks.iter().enumerate() {
+        let events: usize = epoch.iter().map(|task| task.events.len()).sum();
+        let shipments = epoch.iter().filter(|task| task.shipment_end).count();
+        if !(8..=16).contains(&events) || epoch.len() != 1 || shipments != 1 {
+            bail!("local E4 epoch {index} requires one 8..16-event leaf/shipment; got {events} events, {} leaves and {shipments} shipments", epoch.len());
+        }
+    }
+    let checkout = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors().nth(3).context("locate E4 Git checkout")?.canonicalize()?;
+    let status = std::process::Command::new("git").args(["status", "--porcelain"])
+        .current_dir(checkout).output().context("inspect source checkout")?;
+    if !status.status.success() || !status.stdout.is_empty() {
+        bail!("local E4 smoke requires a clean source checkout");
+    }
+    Ok(())
+}
+
 #[cfg(feature = "cuda")]
 fn run_cuda(cli: Cli) -> Result<()> {
     run(cli, ProverClient::builder().cuda().build())
@@ -149,11 +179,14 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
     if let Some(path)=&cli.prepare_policy_manifest {
         if path.exists() { bail!("policy manifest output exists"); }
         let value=json!({"protocolVersion":2,"sourceRevision":sp1_e2e::source_revision(),"syntheticFixture":true,"seed":cli.seed,
-            "validationKind":if cli.local_smoke {"local-smoke"} else {"formal"},
+            "validationKind":if cli.e4_local_smoke {"e4-local-smoke"} else if cli.local_smoke {"local-smoke"} else {"formal"},
             "certificateRoot":bytes32(registry.root()),"polygonCommitment":bytes32(eudr_policy::polygon_commitment(&registry.polygon,registry.polygon_nonce)),
             "leafProgramVKey":leaf_key.verifying_key().bytes32(),"aggregateProgramVKey":epoch_key.verifying_key().bytes32(),
             "leafVKeyDigest":bytes32(leaf_key.verifying_key().hash_bytes()),"aggregateVKeyDigest":bytes32(epoch_key.verifying_key().hash_bytes()),
-            "workloadDigest":workload_digest,"workloads":[{"seed":cli.seed,"np":cli.np,"shipment":cli.shipment,"epoch_s":cli.epoch_s,"epochs":cli.epochs,"offeredEvents":all_events.len(),"offeredShipments":tasks.iter().flatten().filter(|t|t.shipment_end).count(),"digest":workload_digest}],"credentialDepth":16,"nullifierDepth":256});
+            "workloadDigest":workload_digest,"workloads":[{"seed":cli.seed,"np":cli.np,"shipment":cli.shipment,"epoch_s":cli.epoch_s,"epochs":cli.epochs,"offeredEvents":all_events.len(),"offeredShipments":tasks.iter().flatten().filter(|t|t.shipment_end).count(),
+                "perEpochEvents":tasks.iter().map(|epoch|epoch.iter().map(|t|t.events.len()).sum::<usize>()).collect::<Vec<_>>(),
+                "perEpochShipments":tasks.iter().map(|epoch|epoch.iter().filter(|t|t.shipment_end).count()).collect::<Vec<_>>(),
+                "digest":workload_digest}],"credentialDepth":16,"nullifierDepth":256});
         std::fs::write(path,serde_json::to_vec_pretty(&value)?)?;return Ok(());
     }
     sp1_e2e::require_registry_configuration(&registry,&leaf_key.verifying_key().bytes32(),&epoch_key.verifying_key().bytes32(),leaf_key.verifying_key().hash_bytes(),epoch_key.verifying_key().hash_bytes()).map_err(|e|anyhow!(e))?;
@@ -197,7 +230,7 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
     let (sender, receiver) = mpsc::sync_channel(32);
     let producer_stop = stop.clone();
     let producer =
-        thread::spawn(move || produce(tasks, fabric, sender, started, deadline, producer_stop, cli.local_smoke));
+        thread::spawn(move || produce(tasks, fabric, sender, started, deadline, producer_stop, cli.local_smoke || cli.e4_local_smoke));
 
     let archive=std::env::var("EUDR_PRIVATE_ARCHIVE").ok().map(std::path::PathBuf::from);
     if let Some(path)=&archive { if !path.is_absolute() || path.starts_with(std::env::current_dir()?) || path.exists() {bail!("private archive must be a fresh absolute directory outside workspace");} std::fs::create_dir_all(path)?; }
@@ -210,6 +243,11 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
     let mut gas = Vec::new();
     let mut calldata = Vec::new();
     let mut transactions = Vec::new();
+    let mut epoch_samples = Vec::new();
+    let mut previous_events = 0_usize;
+    let mut previous_shipments = 0_usize;
+    let mut previous_leaves = 0_usize;
+    let mut previous_audits = 0_usize;
     let mut committed_events = 0_usize;
     let mut committed_shipments = 0_usize;
     let mut pending_shipments = 0_usize;
@@ -361,6 +399,22 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
                         .as_u64()
                         .context("missing calldataBytes")? as f64,
                 );
+                let epoch_events = committed_events - previous_events;
+                let epoch_shipments = committed_shipments - previous_shipments;
+                let epoch_leaves = leaf_ms.len() - previous_leaves;
+                if cli.e4_local_smoke && (epoch_events == 0 || epoch_shipments != 1 || epoch_leaves != 1
+                    || receipt["eventCount"].as_str().and_then(|v| v.parse::<usize>().ok()) != Some(epoch_events)
+                    || receipt["lotCount"].as_str().and_then(|v| v.parse::<usize>().ok()) != Some(epoch_leaves)) {
+                    bail!("local E4 epoch proof accounting differs from mined receipt");
+                }
+                epoch_samples.push(json!({"epochId":epoch_id,"events":epoch_events,"shipments":epoch_shipments,"lots":epoch_leaves,
+                    "leafProvingMs":leaf_ms[previous_leaves..].to_vec(),"aggregateProvingMs":aggregate_ms.last().copied(),
+                    "auditLatencyMs":audit_ms[previous_audits..].to_vec(),"gasUsed":gas.last().copied(),
+                    "calldataBytes":calldata.last().copied(),"transactionHash":receipt["transactionHash"]}));
+                previous_events = committed_events;
+                previous_shipments = committed_shipments;
+                previous_leaves = leaf_ms.len();
+                previous_audits = audit_ms.len();
                 transactions.push(receipt);
                 epochs_completed += 1;
                 Ok(())
@@ -406,10 +460,11 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
             "gas_samples": gas,
             "calldata_samples": calldata,
             "transactions": transactions,
+            "epoch_samples": epoch_samples,
             "host": sp1_e2e::compute_host().map_err(|e|anyhow!(e))?,
         "protocolVersion": 2, "sourceRevision": sp1_e2e::source_revision(), "workload_digest": workload_digest,
-        "validationKind":if cli.local_smoke {"local-smoke"} else {"formal"},
-        "pacing":if cli.local_smoke {"accelerated"} else {"poisson-paced"},
+        "validationKind":if cli.e4_local_smoke {"e4-local-smoke"} else if cli.local_smoke {"local-smoke"} else {"formal"},
+        "pacing":if cli.local_smoke || cli.e4_local_smoke {"accelerated"} else {"poisson-paced"},
         "registryPair": {"certificateRoot": bytes32(registry.root()),"polygonCommitment": bytes32(eudr_policy::polygon_commitment(&registry.polygon,registry.polygon_nonce))},
         "registryManifestSHA256":std::env::var("POLICY_MANIFEST").ok().and_then(|p|std::fs::read(p).ok()).map(|b|hex::encode(Sha256::digest(b))),
         "verificationKind": "sp1-groth16", "syntheticFixture": true,
@@ -807,6 +862,7 @@ mod tests {
             wall_time_s: None,
             prepare_policy_manifest: None,
             local_smoke: false,
+            e4_local_smoke: false,
             fabric_gateway: "http://127.0.0.1:8080".to_string(),
             anchor_server: "http://127.0.0.1:8546".to_string(),
             prover: ProverKind::Cpu,

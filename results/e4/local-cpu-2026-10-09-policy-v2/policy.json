@@ -1,0 +1,40 @@
+{
+  "aggregateProgramVKey": "0x00590c70a2ec9506cb2f15a5972a99c0910af76161fa31013b2dbe51f4c622a1",
+  "aggregateVKeyDigest": "0x2c8638513b2541b265e2b4b272a99c090857bb0b07e8c404765b7ca374c622a1",
+  "certificateRoot": "0x5f7c37367478a72359b8984193b9aacc3ac8407502ba27cda99bb4994f4298ed",
+  "credentialDepth": 16,
+  "leafProgramVKey": "0x006a84ed741539449342d9da781756448d9675642cb7e9fcd4534ed421127eb9",
+  "leafVKeyDigest": "0x354276ba054e5124685b3b4f017564486cb3ab2132dfa7f328a69da821127eb9",
+  "nullifierDepth": 256,
+  "polygonCommitment": "0xa78ea2a431f876fc07163c271fb0620cda020934c27cc1b662cf31f41fd21ec3",
+  "protocolVersion": 2,
+  "seed": 3,
+  "sourceRevision": "d4200141b8aed5f23f67ea8c5f602b925f72afc2",
+  "syntheticFixture": true,
+  "validationKind": "e4-local-smoke",
+  "workloadDigest": "0x2dfe4b8c1db14963639faca25c4896a27deba35cbde44af64c3178de483591d7",
+  "workloads": [
+    {
+      "digest": "0x2dfe4b8c1db14963639faca25c4896a27deba35cbde44af64c3178de483591d7",
+      "epoch_s": 60,
+      "epochs": 4,
+      "np": 3,
+      "offeredEvents": 48,
+      "offeredShipments": 4,
+      "perEpochEvents": [
+        13,
+        14,
+        12,
+        9
+      ],
+      "perEpochShipments": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "seed": 3,
+      "shipment": 16
+    }
+  ]
+}

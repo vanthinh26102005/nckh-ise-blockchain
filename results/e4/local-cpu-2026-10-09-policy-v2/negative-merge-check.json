@@ -1,0 +1,11 @@
+{
+  "validationKind": "local-integrity-negative-check",
+  "allRejected": true,
+  "cases": {
+    "missing": "exactly four unique contiguous epoch shards required",
+    "duplicate": "exactly four unique contiguous epoch shards required",
+    "bad_receipt": "successful Anvil receipt with transaction hash and gas is required",
+    "wrong_host": "epoch shard 1 host mismatch",
+    "partial": "partial or censored local run cannot merge as complete"
+  }
+}
