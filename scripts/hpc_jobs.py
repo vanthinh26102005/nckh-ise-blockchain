@@ -20,7 +20,7 @@ def time_seconds(value):
 def render(config, phase, output_root, revision):
     if phase not in PHASES:
         raise ValueError('unknown HPC phase')
-    for field in ('partition', 'time', 'container_runtime', 'compute_host'):
+    for field in ('partition', 'qos', 'time', 'container_runtime', 'compute_host'):
         value = config.get(field)
         if not isinstance(value, str) or not value.strip() or '\n' in value or '\r' in value:
             raise ValueError(f'{field} must come from actual HPC configuration')
@@ -30,6 +30,8 @@ def render(config, phase, output_root, revision):
             continue
         if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_.:,/-]+',value):
             raise ValueError(f'invalid Slurm token: {field}')
+    if not re.fullmatch(r'[A-Za-z0-9_.-]+', config['qos']):
+        raise ValueError('invalid Slurm token: qos')
     if config['container_runtime'] != 'docker':
         raise ValueError('current Fabric topology requires Docker; no assumed runtime adapter')
     if config.get('concurrency', 1) != 1:
@@ -71,6 +73,7 @@ def render(config, phase, output_root, revision):
                                   for key in ('gate','policy_manifest','preflight','pilot_report') if cooked.get(key)}
     header = ['#!/usr/bin/env bash', f'#SBATCH --job-name=eudr-{phase}',
               f'#SBATCH --partition={config["partition"]}',
+              f'#SBATCH --qos={config["qos"]}',
               f'#SBATCH --nodelist={config["compute_host"]}',
               '#SBATCH --nodes=1', '#SBATCH --ntasks=1']
     if config.get('account'): header.append(f'#SBATCH --account={config["account"]}')

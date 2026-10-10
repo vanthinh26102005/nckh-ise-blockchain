@@ -36,6 +36,7 @@ sinfo -R
 scontrol show partition
 squeue -u "$USER"
 sacctmgr show assoc where user="$USER" format=Cluster,Account,Partition,QOS
+sacctmgr -n -P show assoc where user="$USER" format=Cluster,Account,Partition,QOS%100,DefaultQOS
 df -h "/datastore/$USER"
 quota -s
 ```
@@ -45,6 +46,12 @@ Nếu `sacctmgr`/quota không được cấp quyền hoặc chưa có, hỏi adm
 PDF của trường cung cấp ví dụ **small / normal / large**, lần lượt MIG `1g.18gb / 2g.35gb / 3g.71gb`; ví dụ account `uit`, tối đa3ngày/job,50jobs submitted/pending và mỗi account chỉ1job chạy đồng thời. Đây là nội dung tài liệu, **phải kiểm tra cấu hình live/quyền account**. Partition `large` cần thầy cho phép. Không mặc định có toàn bộ H200 hoặc35GB MIG đủ cho SP1.
 
 Lưu lại: partition được phép, account/QOS, GPU GRES có count (ví dụ trong PDF `gpu:2g.35gb:1`), NodeName/hostname compute thực tế, CPU/RAM được phép, time limit, Docker và CUDA toolchain. Job generator dùng `--nodelist` và kiểm tra hostname để giữ cùng host với A/B preflight; nếu NodeName khác hostname, nhờ admin xác nhận cách chọn node, không bỏ kiểm tra để chạy đại.
+
+Kiểm tra live ngày 10/10/2026 của account `dungtrt`: cluster `slurm`, account
+`uit`, QOS được cấp `mig1-18,mig2-35,mig3-71,mig7-141`, **DefaultQOS trống**.
+Với allocation đã chọn `normal` và `gpu:2g.35gb:1`, phải đặt QOS `mig2-35`.
+Đây là snapshot quyền truy cập, không xác nhận còn slot hoặc đủ VRAM cho SP1.
+Chạy lại các lệnh kiểm tra nếu chọn slice/partition khác; generator không tự đoán QOS.
 
 ## 3. Clone và chốt code trong datastore
 
@@ -85,6 +92,10 @@ Trước hết kiểm tra công cụ có sẵn, load module theo hướng dẫn 
 
 ```sh
 command -v cargo rustc rustup node npm go docker flock nvcc
+if type module >/dev/null 2>&1; then
+  module list
+  module -t avail 2>&1
+fi
 rustup toolchain list
 rustc --version
 cargo --version
@@ -94,6 +105,20 @@ go version
 ```
 
 Cần Python>=3.11, Go tương thích Gateway (`go.mod` hiện1.25), Rust nightly/succinct và SP1 SDK6.4.0 đã khóa; Node/npm, Docker daemon/Compose, CUDA toolkit và NVIDIA driver do trường quản lý. Không nâng SDK/lockfiles để vượt build error. Hỏi admin nếu Docker chỉ có trên compute node hoặc chỉ cấp Apptainer: topology hiện cần Docker, chưa có adapter Apptainer.
+
+Phiên `login01` đã kiểm tra ngày 10/10 chỉ thấy Python3 và `flock` trong nhóm
+công cụ trên; không coi clone repo thành công là môi trường đã sẵn sàng. Module
+`cuda12.9/toolkit/12.9.1` có trong danh sách live. Nếu admin xác nhận toolkit này
+cho allocation, load nó trước khi submit và kiểm tra lại trên compute node:
+
+```sh
+module load cuda12.9/toolkit/12.9.1
+command -v cargo rustc rustup node npm go docker flock nvcc
+nvcc --version
+```
+
+Rust/SP1, Node/npm, Go và Docker vẫn cần môi trường đã được chuẩn bị theo quyền
+của trường. Nếu thiếu, dừng ở kiểm tra môi trường; không submit proof để thử may rủi.
 
 Environment phân tích đặt trong datastore; các package này không chạy proof:
 
@@ -132,7 +157,7 @@ docker image inspect ghcr.io/foundry-rs/foundry:stable \
   --format '{{index .RepoDigests 0}}'
 ```
 
-`anvil_image` trong config dùng digest/image đã được chuẩn bị. Jobs **không tự pull image hoặc xin thêm quyền Docker**. Fabric2.5.8/tool images và Go chaincode build cũng cần sẵn/tải được. Thiếu Docker permission/network/image: dừng ở preflight, gửi error; không đổi qua mock.
+`anvil_image` trong config dùng digest/image đã được chuẩn bị. Jobs **không tự pull image hoặc xin thêm quyền Docker**. Fabric2.5.16/tool images và Go chaincode build cũng cần sẵn/tải được. Thiếu Docker permission/network/image: dừng ở preflight, gửi error; không đổi qua mock.
 
 ## 5. Cấu hình một lần, xem command plan, chưa submit
 
@@ -143,7 +168,21 @@ export HPC_CONFIG="$HPC_ROOT/hpc-config.json"
 nano "$HPC_CONFIG"
 ```
 
-Điền các field `null` từ bước2/4: partition/account/gres/compute_host/time/memory_gib/cpus/anvil_image. `account=null` chỉ khi admin xác nhận dùng association mặc định; `gres=null` chỉ cho E1 CPU không cần GPU. Các phase đo GPU bắt buộc `prover=cuda` và GPU GRES đã xác nhận. CPU RAM khác GPU VRAM; RAM4GB trong ví dụ train của PDF không phải ngân sách SP1. Chọn đủ RAM theo local/resource review và quota, không coi32/64GB đã được nghiệm thu.
+Điền các field `null` từ bước2/4: partition/account/**qos**/gres/compute_host/time/memory_gib/cpus/anvil_image. `qos` bắt buộc và được ghi vào `#SBATCH --qos=…`; thiếu QOS hoặc giá trị không hợp lệ bị từ chối trước khi sinh script. `account=null` chỉ khi admin xác nhận dùng association mặc định; `gres=null` chỉ cho E1 CPU không cần GPU. Các phase đo GPU bắt buộc `prover=cuda` và GPU GRES đã xác nhận. CPU RAM khác GPU VRAM; RAM4GB trong ví dụ train của PDF không phải ngân sách SP1. Chọn đủ RAM theo local/resource review và quota, không coi32/64GB đã được nghiệm thu.
+
+Ví dụ chỉ điền các giá trị đã xác nhận cho slice 35GB; giữ các budget/image/input
+khác để review theo allocation thực tế:
+
+```sh
+python3 - "$HPC_CONFIG" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1]); c = json.loads(p.read_text())
+c.update(partition="normal", account="uit", qos="mig2-35",
+         gres="gpu:2g.35gb:1", compute_host="h200node01")
+p.write_text(json.dumps(c, indent=2) + "\n")
+PY
+```
 
 `epoch_base` là ID cho synthetic fixtures/run domain, đổi cho lượt mới để không dùng lại event ID trên ledger cũ. Giữ cùng epoch_base giữa prepare và A/B preflight. Config này chứa **public paths/config, không private key**. `gate/policy_manifest/preflight/pilot_report` được điền sau khi các phase trước có output và đã review. `pilot_reviewed` ban đầufalse.
 
@@ -194,6 +233,11 @@ scontrol show job "$JOB_ID"
 
 HPC trả job ID nghĩa là đã nhận submit, chưa chắc đã được cấp node. `PD` đọc reason; `R` mới đang chạy. Theo dõi và kiểm tra terminal status:
 
+`QOSMaxJobsPerUserLimit` nghĩa là QOS đã nhận job nhưng account đang chạm giới
+hạn số job chạy; bổ sung `--qos` không gỡ giới hạn này. Không hủy job của thầy/nhóm
+khác. Dùng `squeue -r -u "$USER"` và `squeue --start -j "$JOB_ID"` để xem lại;
+`START_TIME=N/A` chưa có thời điểm chạy dự kiến.
+
 ```sh
 tail -n 60 "$HPC_ROOT/logs/eudr-gate-$JOB_ID.out"
 tail -n 60 "$HPC_ROOT/logs/eudr-gate-$JOB_ID.err"
@@ -204,6 +248,11 @@ cat "$GATE_OUT/gate-manifest.json"
 ```
 
 Expected gate: two lots×8events Fabric→compressed proofs→aggregate Groth16; SP1 verifier thật, tampered child/proof/values rejected; receipt status1/root/log/count đúng; manifest source/keys đúng. Không dùng stub/execute để tạo PASS. Thiếu output/OUT_OF_MEMORY/TIMEOUT/failed: chưa chuyển sang benchmark.
+
+Các phase dựng stack (gate, A/B preflight, E2 pilot/formal, E3 và E4) tự gọi
+`scripts/e3_local_warmup.py` trước workload đo. Sentinel được commit/readback và
+loại khỏi số liệu; kết quả nằm ở `fabric-warmup.json`. Warmup thất bại thì phase
+dừng, giữ output/stack để kiểm tra, không chuyển sang measurement.
 
 Điền output mới vào config bằng public paths (không sửa file manifest):
 

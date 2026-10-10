@@ -1,6 +1,7 @@
 {
   "partition": null,
   "account": null,
+  "qos": null,
   "gres": null,
   "compute_host": null,
   "time": null,

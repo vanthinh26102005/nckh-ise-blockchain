@@ -11,7 +11,7 @@ import hpc_jobs
 
 class Handoff(unittest.TestCase):
     def config(self):
-        return dict(partition="verified", account=None, gres="gpu:1",
+        return dict(partition="verified", account=None, qos="mig2-35", gres="gpu:1",
                     time="01:00:00", container_runtime="docker", compute_host="gpu-node",
                     cpus=4, memory_gib=64, prover="cuda", concurrency=1,
                     anvil_image="ghcr.io/foundry-rs/foundry:stable", epoch_base=700001,
@@ -23,6 +23,34 @@ class Handoff(unittest.TestCase):
             script = hpc_jobs.render(self.config(), "gate", tmp, "a" * 40)
             result = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_qos_is_explicit_and_invalid_values_rejected(self):
+        script = hpc_jobs.render(self.config(), "gate", "/tmp/qos-hpc-job", "a" * 40)
+        directives = dict(line.removeprefix("#SBATCH --").split("=", 1)
+                          for line in script.splitlines() if line.startswith("#SBATCH --"))
+        self.assertEqual(directives.get("qos"), "mig2-35")
+        for value in (None, "", "bad\n#SBATCH --extra", "mig2-35 --extra", "bad/name"):
+            with self.subTest(value=value):
+                c = self.config()
+                c["qos"] = value
+                with self.assertRaisesRegex(ValueError, "qos"):
+                    hpc_jobs.render(c, "gate", "/tmp/qos-hpc-job", "a" * 40)
+
+    def test_stack_phases_warm_chaincode_before_measurements(self):
+        from hpc_run import plan
+        c = self.config()
+        c.update(gate="/external/gate.json", policy_manifest="/external/catalog.json",
+                 preflight="/external/preflight.json", pilot_report="/external/pilot.json")
+        for phase in ("gate", "preflight", "e2-pilot", "e2", "e3", "e4"):
+            with self.subTest(phase=phase):
+                value = plan(c, phase, Path("/external/output"), "a" * 40)
+                self.assertEqual(value["measure"][0]["argv"], ["python3", "scripts/e3_local_warmup.py",
+                    "--out", "/external/output/fabric-warmup.json"])
+                self.assertGreater(len(value["measure"]), 1)
+        for phase in ("e1", "prepare"):
+            value = plan(c, phase, Path("/external/output"), "a" * 40)
+            self.assertFalse(value["stack"])
+            self.assertFalse(any("scripts/e3_local_warmup.py" in step["argv"] for step in value["measure"]))
 
     def test_scheduler_budget_cannot_truncate_formal_workload_by_design(self):
         c = self.config()
@@ -49,13 +77,15 @@ class Handoff(unittest.TestCase):
             # Every proving pipeline exposes its real runner args without executing it.
             self.assertTrue(value["measure"])
         formal = plan(c, "e2", Path("/external/output"), "a" * 40)
-        run = formal["measure"][1]["argv"]
+        run = next(step["argv"] for step in formal["measure"] if step["argv"][0].endswith("e2_real_benchmark"))
         self.assertEqual(run[run.index("--seeds") + 1], "30")
         self.assertNotIn("--accelerated", run)
         self.assertTrue(formal["prepare"])
-        e3 = plan(c, "e3", Path("/external/output"), "a" * 40)["measure"][0]["argv"]
+        e3 = next(step["argv"] for step in plan(c, "e3", Path("/external/output"), "a" * 40)["measure"]
+                  if "scripts/e3_run.py" in step["argv"])
         self.assertEqual(e3[e3.index("--mode") + 1], "fabric-only")
-        e4 = plan(c, "e4", Path("/external/output"), "a" * 40)["measure"][0]["argv"]
+        e4 = next(step["argv"] for step in plan(c, "e4", Path("/external/output"), "a" * 40)["measure"]
+                  if "scripts/e4_run.py" in step["argv"])
         self.assertEqual(e4[e4.index("--plan-index") + 1], "0")
         self.assertEqual(e4[e4.index("--executor") + 1], "real-e3")
 

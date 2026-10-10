@@ -182,6 +182,8 @@ def plan(c, phase, out, revision):
                          '--out', out / 'raw.jsonl', '--manifest-out', out / 'manifest.json'])]
     else:
         raise ValueError('unknown HPC phase')
+    if phase != 'prepare':
+        measure.insert(0, step(['python3', 'scripts/e3_local_warmup.py', '--out', out / 'fabric-warmup.json']))
     return dict(setup=setup, prepare=prepare, measure=measure, policy_manifest=policy, stack=phase != 'prepare')
 
 
