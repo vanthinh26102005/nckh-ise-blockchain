@@ -1,0 +1,38 @@
+{
+  "experiment": "E1",
+  "sourceRevision": "e6ea9b9eb64b57ce3f922897beba26acbff1e8ea",
+  "environment": "local CPU, macOS 26.5, Apple M1 Pro, 32 GiB RAM",
+  "formalComplete": false,
+  "pathBBase": {
+    "status": "passed-local",
+    "rowsOk": 1200,
+    "rowsExpected": 1200,
+    "cellsStrictlyAnalyzed": 40,
+    "credentialDepths": [6, 16],
+    "eventsPerLot": [8, 16, 32, 64],
+    "seedsPerCell": 30
+  },
+  "pathBWrapper": {
+    "status": "passed-local",
+    "eventsPerLot": [8, 64],
+    "credentialDepths": [16],
+    "seedsPerCell": 1,
+    "initialN8Attempt": "incomplete-resource: swap_growth_limit"
+  },
+  "pathASp1Leaf": {
+    "status": "passed-local",
+    "eventsPerLot": 8,
+    "proofKind": "sp1-groth16",
+    "repetitions": 1,
+    "coldCache": true,
+    "initialAttempt": "incomplete-resource: swap_growth_limit",
+    "proofBytes": 356,
+    "publicValuesBytes": 352
+  },
+  "pathASp1Aggregate": {
+    "status": "not-run"
+  },
+  "gpu": {
+    "status": "not-run: no NVIDIA CUDA device on local host"
+  }
+}

@@ -1,7 +1,7 @@
 name: e2raft
 
 x-orderer: &orderer
-  image: hyperledger/fabric-orderer:2.5.8
+  image: hyperledger/fabric-orderer:2.5.16
   command: orderer
   environment: &orderer-environment
     FABRIC_LOGGING_SPEC: INFO
@@ -26,7 +26,7 @@ x-orderer: &orderer
   networks: [e2-fabric]
 
 x-peer: &peer
-  image: hyperledger/fabric-peer:2.5.8
+  image: hyperledger/fabric-peer:2.5.16
   command: peer node start
   environment: &peer-environment
     FABRIC_LOGGING_SPEC: INFO
