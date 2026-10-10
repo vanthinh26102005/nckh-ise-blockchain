@@ -862,6 +862,7 @@ mod tests {
             wall_time_s: None,
             prepare_policy_manifest: None,
             local_smoke: false,
+            e4_local_smoke: false,
             fabric_gateway: "http://127.0.0.1:8080".to_string(),
             anchor_server: "http://127.0.0.1:8546".to_string(),
             prover: ProverKind::Cpu,

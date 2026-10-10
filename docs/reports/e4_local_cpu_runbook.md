@@ -58,8 +58,11 @@ own prebuilt manifest.
    --policy "$E4_PRIVATE/e4-policy.json" --gate
    "$E4_PRIVATE/e3-gate-manifest.json" --shards "$E4_PRIVATE/shards"`.
    Then `merge` with the same policy/gate/shards and `--merged
-   "$E4_PRIVATE/merged.json"`; finally `analyze --merged … --report
-   "$E4_PRIVATE/report.json"`. Verify independent Fabric readback for every
+   "$E4_PRIVATE/merged.json"`; finally `analyze --merged
+   "$E4_PRIVATE/merged.json" --policy "$E4_PRIVATE/e4-policy.json" --gate
+   "$E4_PRIVATE/e3-gate-manifest.json" --report "$E4_PRIVATE/report.json"`.
+   Analysis rechecks the trusted source/workload, receipt chain and measured
+   gas/calldata against the receipts. Verify independent Fabric readback for every
    offered event and Anvil RPC receipt/root for all four epochs. Publish only
    selected metrics and hashes; raw proof, witnesses, full logs and Fabric
    crypto stay private.

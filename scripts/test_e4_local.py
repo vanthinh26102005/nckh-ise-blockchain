@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Integrity tests for the separate E4 local CPU evidence path."""
 import copy
+import json
 import socket
+import subprocess
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 import e4_local
 import e4_analyze
@@ -80,6 +85,45 @@ class TestLocalEvidence(unittest.TestCase):
         bad[2]["receipt"]["status"] = 0
         with self.assertRaisesRegex(ValueError, "successful Anvil"):
             e4_local.merge(bad, manifest, policy, gate, policy_sha)
+
+    def test_samples_must_match_receipt_costs(self):
+        for field, samples, value in (("gasUsed", "gas_samples", 123456.0),
+                                      ("calldataBytes", "calldata_samples", 999.0)):
+            with self.subTest(field=field):
+                run, policy, gate, policy_sha = fixture()
+                run["epoch_samples"][0][field] = value
+                run[samples][0] = value
+                with self.assertRaisesRegex(ValueError, "receipt costs"):
+                    e4_local.make_shards(run, policy, gate, policy_sha)
+
+    def test_analyze_cli_revalidates_receipts_and_trusted_inputs(self):
+        for mutation in (None, "receipt", "source", "workload"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                run, policy, gate, _ = fixture()
+                policy_bytes = json.dumps(policy).encode()
+                policy_sha = e4_local.sha(policy_bytes)
+                run["registryManifestSHA256"] = policy_sha
+                rows, manifest = e4_local.make_shards(run, policy, gate, policy_sha)
+                merged = e4_local.merge(rows, manifest, policy, gate, policy_sha)
+                if mutation == "receipt": merged["transactions"][0]["status"] = 0
+                if mutation == "source": merged["sourceRevision"] = "f" * 40
+                if mutation == "workload": merged["workload_digest"] = "0x" + "ee" * 32
+                (root / "policy.json").write_bytes(policy_bytes)
+                (root / "gate.json").write_text(json.dumps(gate))
+                (root / "merged.json").write_text(json.dumps(merged))
+                result = subprocess.run([sys.executable, str(Path(e4_local.__file__)), "analyze",
+                    "--merged", str(root / "merged.json"), "--policy", str(root / "policy.json"),
+                    "--gate", str(root / "gate.json"), "--report", str(root / "report.json")],
+                    text=True, capture_output=True)
+                if mutation is None:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    report = json.loads((root / "report.json").read_text())
+                    self.assertEqual(report["events"], 38)
+                    self.assertEqual(report["gas_total"], 4000)
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse((root / "report.json").exists())
 
     def test_untrusted_workload_and_non_drained_run_rejected(self):
         run, policy, gate, policy_sha = fixture()

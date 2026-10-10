@@ -30,6 +30,12 @@ def fresh_out(path):
     return path
 
 
+def check_epoch_cost(epoch, receipt):
+    if (epoch.get("gasUsed") != int(receipt["gasUsed"])
+            or epoch.get("calldataBytes") != receipt.get("calldataBytes")):
+        raise ValueError("epoch samples differ from mined receipt costs")
+
+
 def check_run(run, policy, gate, policy_sha):
     if run.get("validationKind") != "e4-local-smoke" or run.get("pacing") != "accelerated" or run.get("mode") != "proposed":
         raise ValueError("E4 local result needs the bounded proposed CPU path")
@@ -86,6 +92,7 @@ def check_run(run, policy, gate, policy_sha):
     if len(workload.get("perEpochEvents", [])) != 4 or len(workload.get("perEpochShipments", [])) != 4:
         raise ValueError("trusted workload needs four epoch counts")
     for index, (epoch, receipt) in enumerate(zip(epochs, receipts)):
+        check_epoch_cost(epoch, receipt)
         if (epoch.get("events") != workload["perEpochEvents"][index] or epoch.get("shipments") != 1
                 or workload["perEpochShipments"][index] != 1 or epoch.get("lots") != 1
                 or not 8 <= epoch["events"] <= 16):
@@ -161,6 +168,7 @@ def check_partial_run(run, policy, gate, policy_sha):
     if len(workload.get("perEpochEvents", [])) != 4 or len(workload.get("perEpochShipments", [])) != 4:
         raise ValueError("partial E4 trusted per-epoch counts missing")
     for index, (epoch, receipt) in enumerate(zip(epochs, receipts)):
+        check_epoch_cost(epoch, receipt)
         if (epoch.get("events") != workload["perEpochEvents"][index]
                 or epoch.get("shipments") != 1 or workload["perEpochShipments"][index] != 1
                 or epoch.get("lots") != 1
@@ -288,17 +296,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("shard", "merge", "analyze"))
     parser.add_argument("--run", type=Path, help="Rust JSON output (shard only)")
-    parser.add_argument("--policy", type=Path, help="trusted policy manifest (shard/merge)")
-    parser.add_argument("--gate", type=Path, help="same-revision E3 gate manifest (shard/merge)")
+    parser.add_argument("--policy", type=Path, required=True, help="trusted policy manifest")
+    parser.add_argument("--gate", type=Path, required=True, help="same-revision E3 gate manifest")
     parser.add_argument("--shards", type=Path, help="raw shard directory (shard/merge)")
     parser.add_argument("--merged", type=Path, help="merged JSON output (merge/analyze)")
     parser.add_argument("--report", type=Path, help="report JSON output (analyze)")
     args = parser.parse_args()
     try:
-        if args.command in ("shard", "merge"):
-            policy_bytes = args.policy.read_bytes()
-            policy, gate = json.loads(policy_bytes), json.loads(args.gate.read_text())
-            policy_sha = sha(policy_bytes)
+        policy_bytes = args.policy.read_bytes()
+        policy, gate = json.loads(policy_bytes), json.loads(args.gate.read_text())
+        policy_sha = sha(policy_bytes)
         if args.command == "shard":
             out = fresh_out(args.shards)
             run = json.loads(args.run.read_text().splitlines()[-1])
@@ -335,8 +342,7 @@ def main():
         else:
             out = fresh_out(args.report)
             run = json.loads(args.merged.read_text())
-            if run.get("validationKind") != "e4-local-smoke" or run.get("status") != "ok" or len(run.get("transactions", [])) != 4:
-                raise ValueError("analyzer needs a complete local four-epoch merge")
+            check_run(run, policy, gate, policy_sha)
             report = summarize(run)
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(report, indent=2) + "\n")
