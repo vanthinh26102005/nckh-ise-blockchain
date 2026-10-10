@@ -2,14 +2,16 @@
 
 Xem phương pháp: [`docs/reports/e4_methodology.md`](../../docs/reports/e4_methodology.md) · Issue #22.
 
-**Trạng thái cập nhật 04/10/2026:** đã có executor thật, preflight và shard merge.
-Checkout hiện chỉ có plan/summary, chưa có kết quả screening/confirmation GPU
-chính thức. Xem [báo cáo E4 cho giảng viên](../../docs/reports/e4_teacher_report.md).
+**Trạng thái cập nhật 09/10/2026:** đã chạy E4 local CPU bốn epoch bằng Fabric,
+SP1 và Anvil. Xem [báo cáo và số đo local](local-cpu-2026-10-09-policy-v2/report.md).
+Đây là một điểm smoke có lịch sự kiện tăng tốc, không phải screening/confirmation
+GPU chính thức. Xem thêm [báo cáo E4 cho giảng viên](../../docs/reports/e4_teacher_report.md).
 
 ## Bố cục
 
 ```
 results/e4/
+  local-cpu-2026-10-09-policy-v2/ # kết quả local CPU, formalComplete=false
   plan.csv                 # sweep plan (COMMITTED — là config, không phải số đo)
   plan.summary.json        # đếm cell/run mỗi phase (committed)
   screening/

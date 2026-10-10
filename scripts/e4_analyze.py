@@ -119,6 +119,9 @@ def validate(records, manifest, cells, require_real, require_single_host, plan_r
     warnings = []
 
     executors = {r["executor"] for r in records}
+    if require_real and (manifest.get("validationKind", "formal") != "formal"
+                         or any(r.get("validationKind", "formal") != "formal" for r in records)):
+        errors.append("local smoke evidence cannot enter the formal E4 sweep")
     if require_real and executors != {"real-e3"}:
         errors.append(f"--require-real set but executor(s) = {sorted(executors)}; mock is not E4 evidence.")
     if require_real and (manifest.get("e3_gate_passed") is not True or not manifest.get("preflight_ab")):

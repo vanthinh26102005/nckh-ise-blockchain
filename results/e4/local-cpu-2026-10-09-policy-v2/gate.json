@@ -1,0 +1,48 @@
+{
+  "experiment": "E3 aggregate gate",
+  "protocolVersion": 2,
+  "verificationKind": "sp1-groth16",
+  "tamperedAggregateProofRejected": true,
+  "tamperedAggregateValuesRejected": true,
+  "certificateRoot": "0x6cf77ba8bffa9eda75b9fda015cbf1eaeaa8ffae1e12a184f64c815da21d532d",
+  "polygonCommitment": "0x2d37e79e7157cff17a415257ab9d2a2db06f445a3d910f3787d7276902863128",
+  "publicValuesSha256": "91aee4acbb021d80c475c0dbf8b69889861d0d03ff9897f20ee525b0a32d0e46",
+  "proofSha256": "d48c6f41068686c80bedf2f4688c6b3d2d071417cfb15b86922c5b1a3971f2bc",
+  "receiptSha256": "61c4d9d0a88df1db0f0578abe22143e4c6a1b765fd510faf0c42330d0850b5ef",
+  "anchor": "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707",
+  "registry": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+  "anchorEvent": {
+    "name": "EpochAggregated",
+    "address": "0x5fc8d32690cc91d4c39d9d3abcbd16989f875707",
+    "transactionHash": "0x00d75ede1105a363d2aee814927a0f793cec20a3ecb396557113a470225d0e15",
+    "blockHash": "0x190f42c92da61b8777485bd391ef412789ef38fc9499a7b75c9ded950dfe6e0a",
+    "args": {
+      "epochId": "700001",
+      "epochCommitment": "0x36484d4261530b6776994861d7e9082ca48f77c668c084f2d7e711b681333dbf",
+      "oldNullifierRoot": "0x1a8917f23b86dd549f86854cfb01e45ea09dab7a725e9ec64df653c16a3bf2be",
+      "newNullifierRoot": "0x016bcc98b7c950b53c760201329d4066910639b37037e787ceff708bdfb56a21",
+      "lotCount": "2",
+      "eventCount": "16"
+    }
+  },
+  "status": "passed",
+  "gitCommit": "d4200141b8aed5f23f67ea8c5f602b925f72afc2",
+  "fixtureSha256": "69a3117a675b324d6fbc4fd01446b6d2b29468b67d361ef8e6c98eefe7e13670",
+  "epochId": "700001",
+  "policyProgramVKeyDigest": "0x354276ba054e5124685b3b4f017564486cb3ab2132dfa7f328a69da821127eb9",
+  "aggregateProgramVKeyDigest": "0x2c8638513b2541b265e2b4b272a99c090857bb0b07e8c404765b7ca374c622a1",
+  "aggregateProgramVKey": "0x00590c70a2ec9506cb2f15a5972a99c0910af76161fa31013b2dbe51f4c622a1",
+  "fabricEventsAcknowledged": 16,
+  "fabricEventsReadback": 16,
+  "tamperedChildRejected": true,
+  "leafCompressedProofMs": [
+    544101,
+    534595
+  ],
+  "aggregateGroth16ProofMs": 1316972,
+  "anvilReceiptStatus": 1,
+  "transactionHash": "0x00d75ede1105a363d2aee814927a0f793cec20a3ecb396557113a470225d0e15",
+  "gasUsed": "301256",
+  "calldataBytes": 932,
+  "newNullifierRoot": "0x016bcc98b7c950b53c760201329d4066910639b37037e787ceff708bdfb56a21"
+}

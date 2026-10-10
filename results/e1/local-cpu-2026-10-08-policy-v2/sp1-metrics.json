@@ -1,0 +1,18 @@
+{
+  "sourceRevision": "e6ea9b9eb64b57ce3f922897beba26acbff1e8ea",
+  "protocolVersion": 2,
+  "verificationKind": "sp1-groth16",
+  "eventCount": 8,
+  "repetitions": 1,
+  "coldCache": true,
+  "coldCacheIncludesCircuitDownload": true,
+  "wallSecondsSetupProveDownloadAndVerify": 2059.531217084,
+  "peakProcessTreeRssBytes": 17705320448,
+  "groth16FfiProofGenerationSecondsFromSdkLog": 47.331918375,
+  "compressedProvingSeconds": null,
+  "proofBytes": 356,
+  "publicValuesBytes": 352,
+  "fixtureSha256": "d1b2aee3e85de1da4e131cbc4279a45c7c7c8b2b85d69987d4edd4135dfd1594",
+  "fixtureCommitted": false,
+  "localVerification": "passed"
+}

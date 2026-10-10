@@ -1,0 +1,63 @@
+{
+  "gate": {
+    "transactionHash": "0xf03731d970eae2bb573a42659a5109fb22c99062da3b0689f2a8885a4b0152b9",
+    "status": 1,
+    "anchor": "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707",
+    "gasUsed": "301316",
+    "nullifierRoot": "0x016bcc98b7c950b53c760201329d4066910639b37037e787ceff708bdfb56a21",
+    "matchedGateReceipt": true
+  },
+  "modes": {
+    "hash-on-chain": {
+      "receipt": {
+        "mode": "hash-on-chain",
+        "transactionHash": "0xcad63c2fa5b735faf35d10d8702a3d0fa6bc1052aa29689610926c299799ecd5",
+        "chainId": 31337,
+        "status": 1,
+        "gasUsed": 46907,
+        "calldataBytes": 100,
+        "matchesMeasurement": true
+      }
+    },
+    "vecro-adapted": {
+      "receipt": {
+        "mode": "vecro-adapted",
+        "transactionHash": "0xc1eca8e84cf0ba3d8d0b6db0f159187e328a5d5d46fa9a2af5822d0e43b71ab5",
+        "chainId": 31337,
+        "status": 1,
+        "gasUsed": 298870,
+        "calldataBytes": 868,
+        "matchesMeasurement": true
+      },
+      "root": {
+        "mode": "vecro-adapted",
+        "root": "0x402add308033f822342b4bedf1ed914dfd1f65f9bc64a858f9ccc23f1e9d8767",
+        "matchesReceipt": true
+      }
+    },
+    "fabric-only": {
+      "receipt": {
+        "mode": "fabric-only",
+        "chainId": 31337,
+        "latestBlock": 2,
+        "measurementTransactions": 0
+      }
+    },
+    "proposed": {
+      "receipt": {
+        "mode": "proposed",
+        "transactionHash": "0xaf6bfce9789f508a16062d4d51302a12dcf258d1ae57366e903a3bfdb7daa8f4",
+        "chainId": 31337,
+        "status": 1,
+        "gasUsed": 301280,
+        "calldataBytes": 932,
+        "matchesMeasurement": true
+      },
+      "root": {
+        "mode": "proposed",
+        "root": "0x402add308033f822342b4bedf1ed914dfd1f65f9bc64a858f9ccc23f1e9d8767",
+        "matchesReceipt": true
+      }
+    }
+  }
+}

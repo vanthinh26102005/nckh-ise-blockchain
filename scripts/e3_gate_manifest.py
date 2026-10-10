@@ -63,8 +63,9 @@ def validate_gate(fixture, receipt, git_commit):
     for field, value in expected_event.items():
         if str(event.get("args", {}).get(field, "")).lower() != value:
             raise ValueError(f"aggregate event {field} disagrees with the proved transition")
-    if fixture.get("fabricEventsAcknowledged") != 16:
-        raise ValueError("E3 gate requires two eight-event Fabric lots")
+    if (fixture.get("fabricEventsAcknowledged") != 16 or fixture.get("fabricEventsReadback") != 16
+            or fixture.get("fabricEvidenceReused") is not False):
+        raise ValueError("E3 gate requires two newly committed and exactly read-back eight-event Fabric lots")
     if fixture.get("tamperedChildRejected") is not True:
         raise ValueError("E3 gate requires an SP1 tampered-child rejection check")
 
@@ -105,6 +106,7 @@ def main():
         "aggregateProgramVKeyDigest": fixture["aggregateVKeyDigest"],
         "aggregateProgramVKey": fixture["vkey"],
         "fabricEventsAcknowledged": 16,
+        "fabricEventsReadback": 16,
         "tamperedChildRejected": True,
         "leafCompressedProofMs": fixture["leafCompressedProofMs"],
         "aggregateGroth16ProofMs": fixture["aggregateGroth16ProofMs"],

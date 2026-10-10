@@ -45,6 +45,130 @@ ANVIL_RPC=http://127.0.0.1:18545 node contracts/test/anvil_policy_server_test.mj
 
 Their `contract-stub-test` output proves contract rejection behavior, not SP1 proof verification or a formal gate. The server test also mines a hash-only baseline receipt, labeled `hash-on-chain`.
 
+## E2 CPU local acceptance
+
+Run in a clean, dedicated checkout whose parent directory is the private `EUDR_RUN_ROOT`. The `--local-smoke` entrypoint checks the **actual generated canonical-event count** is 8–16, requires one seed, CPU, accelerated pacing, a bounded queue and an observed local preflight. A Poisson rate by itself is not an event cap. Use fresh output paths and a unique run ID; never use this output for the formal RQ2 table.
+
+```sh
+export EUDR_RUN_ROOT="$(dirname "$PWD")"
+export E2_OUTPUT="$EUDR_RUN_ROOT/output"
+export E2_RUN_ID=$(date +%s)
+export POLICY_MANIFEST="$E2_OUTPUT/e2-local-policy.json"
+export ANVIL_IMAGE=ghcr.io/foundry-rs/foundry:stable
+docker pull "$ANVIL_IMAGE"
+npm ci --prefix contracts
+cargo build --locked --release --manifest-path crates/sp1-e2e/Cargo.toml -p sp1-e2e --bin e2_real_benchmark
+crates/sp1-e2e/target/release/e2_real_benchmark --local-smoke --accelerated --prover cpu \
+  --lambda-events-per-min 16 --duration-min 1 --seeds 1 --run-id "$E2_RUN_ID" \
+  --queue-capacity 1 --queue-wait-timeout-sec 1 \
+  --prepare-policy-manifest "$POLICY_MANIFEST"
+bash scripts/e2_stack.sh up
+uv run --python 3.12 python scripts/e2_preflight.py --local-smoke \
+  --source-revision "$(git rev-parse HEAD)" --out "$E2_OUTPUT/e2-local-preflight.json"
+POLICY_MANIFEST="$POLICY_MANIFEST" crates/sp1-e2e/target/release/e2_real_benchmark \
+  --local-smoke --accelerated --prover cpu --lambda-events-per-min 16 --duration-min 1 \
+  --seeds 1 --run-id "$E2_RUN_ID" --queue-capacity 1 --queue-wait-timeout-sec 1 \
+  --preflight "$E2_OUTPUT/e2-local-preflight.json" --out "$E2_OUTPUT/e2-local.jsonl"
+uv run --python 3.12 python scripts/e2_real_analyze.py \
+  --raw "$E2_OUTPUT/e2-local.jsonl" --policy-manifest "$POLICY_MANIFEST" \
+  --expected-seeds 1 --allow-partial --out "$E2_OUTPUT/e2-local-analysis.json"
+```
+
+Check `localComplete=true`, every lot `fabricReadback=true`, the mined SP1 receipt and the final Fabric/Anvil root transition before calling this local pass. The runtime records an exact ledger readback of every event after Fabric acknowledgement and before proving. Preserve output and logs, then run `bash scripts/e2_stack.sh down` only for the stack owned by this checkout. The local preflight marks GPU/CUDA `N/A` with a reason and is rejected by the formal preflight gate; `make e2` remains the separate paced 480/60/30 campaign.
+
+## E3 local CPU gate and paired four-mode smoke
+
+Issue #42 has two local acceptance stages. Stage A is a real two-lot × eight-event recursive SP1 gate and Anvil receipt. Stage B runs the same deterministic nine-event, one-shipment workload through all four modes on **fresh Fabric and Anvil state per mode**. The local path is accelerated, one CPU seed, and cannot populate the formal RQ3 table or Wilcoxon tests. Run serially from a clean, dedicated checkout inside its private `EUDR_RUN_ROOT`; private proof/witness files stay outside Git.
+
+```sh
+export EUDR_RUN_ROOT="$(dirname "$PWD")"
+export E3_OUTPUT="$EUDR_RUN_ROOT/output"
+export ANVIL_IMAGE=ghcr.io/foundry-rs/foundry:stable
+mkdir -p "$E3_OUTPUT" "$E3_OUTPUT/modes"
+npm ci --prefix contracts
+cargo build --locked --release --manifest-path crates/sp1-e2e/Cargo.toml \
+  -p sp1-e2e --bin e3_epoch_gate --bin e4_real_cell
+export E3_GATE_BINARY="$PWD/crates/sp1-e2e/target/release/e3_epoch_gate"
+export E3_MODE_BINARY="$PWD/crates/sp1-e2e/target/release/e4_real_cell"
+export POLICY_MANIFEST="$E3_OUTPUT/e3-gate-policy.json"
+"$E3_GATE_BINARY" --prepare-only --prover cpu --epoch-id 700001 \
+  --events-per-leaf 8 --out "$POLICY_MANIFEST"
+bash scripts/e2_stack.sh up
+python3 scripts/e3_local_warmup.py --out "$E3_OUTPUT/e3-gate-warmup.json"
+"$E3_GATE_BINARY" --prover cpu --epoch-id 700001 --events-per-leaf 8 \
+  --out "$E3_OUTPUT/e3-gate-proof.json"
+E3_FIXTURE="$E3_OUTPUT/e3-gate-proof.json" ANVIL_RPC=http://127.0.0.1:8545 \
+  node contracts/test/anvil_e3_smoke.mjs > "$E3_OUTPUT/e3-gate-receipt.json"
+python3 scripts/e3_gate_manifest.py --fixture "$E3_OUTPUT/e3-gate-proof.json" \
+  --receipt "$E3_OUTPUT/e3-gate-receipt.json" --git-commit "$(git rev-parse HEAD)" \
+  --out "$E3_OUTPUT/e3-gate-manifest.json"
+bash scripts/e2_stack.sh down
+```
+
+The stack down command leaves ignored generated Fabric crypto/runtime in place. After collecting and checking the gate evidence, call `bash infra/fabric/raft/bootstrap.sh down`, inspect the exact `infra/fabric/raft/runtime` directory owned by this checkout, and remove it before starting a new stack. Do this after each paired mode as well. A cold chaincode may exceed the first 30-second endorsement deadline; the excluded warmup retries only after checking whether its sentinel event was committed.
+
+Prepare the *separate* paired workload manifest from the same clean source revision. The one-seed Poisson schedule yields nine events with `np=4`, shipment size 16 and one 60-second epoch; local execution skips waiting for due times but preserves their deterministic order and digest. Rotate modes for seed 1 as `hash-on-chain`, `vecro-adapted`, `fabric-only`, `proposed`:
+
+```sh
+"$E3_MODE_BINARY" --local-smoke --mode proposed --prover cpu --seed 1 \
+  --np 4 --shipment 16 --epoch-s 60 --epochs 1 \
+  --prepare-policy-manifest "$E3_OUTPUT/e3-local-policy.json"
+export POLICY_MANIFEST="$E3_OUTPUT/e3-local-policy.json"
+reset_e3_runtime() {
+  bash infra/fabric/raft/bootstrap.sh down
+  python3 - <<'PY'
+from pathlib import Path
+import shutil
+repo = Path.cwd().resolve()
+runtime = (repo / "infra/fabric/raft/runtime").resolve()
+assert runtime == repo / "infra/fabric/raft/runtime" and (repo / ".git").exists()
+if runtime.is_dir():
+    shutil.rmtree(runtime)
+PY
+  python3 - <<'PY'
+import socket, time
+ports = (7050, 7051, 7053, 8050, 8053, 9050, 9053, 9051, 8080, 8545, 8546)
+for _ in range(90):
+    free = True
+    for port in ports:
+        with socket.socket() as connection:
+            try:
+                connection.bind(("127.0.0.1", port))
+            except OSError:
+                free = False
+    if free:
+        break
+    time.sleep(1)
+else:
+    raise SystemExit("E3 stack ports are still in use")
+PY
+}
+reset_e3_runtime
+for mode in hash-on-chain vecro-adapted fabric-only proposed; do
+  bash scripts/e2_stack.sh up
+  python3 scripts/e3_local_warmup.py --out "$E3_OUTPUT/$mode-warmup.json"
+  uv run --python 3.12 python scripts/e3_local_run.py \
+    --binary "$E3_MODE_BINARY" --gate "$E3_OUTPUT/e3-gate-manifest.json" \
+    --policy-manifest "$POLICY_MANIFEST" --mode "$mode" \
+    --allocation-root "$EUDR_RUN_ROOT" --out "$E3_OUTPUT/modes/$mode.json"
+  bash scripts/e2_stack.sh down
+  reset_e3_runtime
+done
+```
+
+After all four modes finish, give the analyzer a directory containing only the four mode records. Keep warmup, budget and audit JSON files in `modes/` so they cannot be mistaken for mode records:
+
+```sh
+mkdir -p "$E3_OUTPUT/paired-records"
+for mode in hash-on-chain vecro-adapted fabric-only proposed; do
+  ln -s "../modes/$mode.json" "$E3_OUTPUT/paired-records/$mode.json"
+done
+uv run --python 3.12 python scripts/e3_local_analyze.py \
+  --raw-dir "$E3_OUTPUT/paired-records" --out "$E3_OUTPUT/e3-local-analysis.json"
+```
+
+The mode runner records actual workload digest, source revision, gate hash, receipt and observed container IDs. The local analyzer requires all four distinct stacks and the same paired workload, and emits `localComplete`; the formal `e3_analyze.py` rejects these records even with `--allow-partial`. Verify the gate receipt/root and each mode's L1 scope before publishing public summaries. Keep private raw proof, manifests, full logs and signing material outside Git.
+
 ## Trusted configuration before measurement
 
 Trusted manifest preparation invokes SDK setup and workload/issuer preparation. It performs no proving or network posts, but SDK setup can be expensive: prepare it on the actual HPC host, from final reviewed binaries, before timed runs. Select exact epoch IDs, event counts, seeds, axes and unique run IDs up front.

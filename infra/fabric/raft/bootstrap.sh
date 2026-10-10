@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$ROOT/../../.." && pwd)
 RUNTIME="$ROOT/runtime"
-TOOLS_IMAGE=hyperledger/fabric-tools:2.5.8
+TOOLS_IMAGE=hyperledger/fabric-tools:2.5.16
 CHANNEL=e2channel
 CHAINCODE=e2epcis
 ORDERER_CA=/workspace/infra/fabric/raft/runtime/organizations/ordererOrganizations/example.com/tlsca/tlsca.example.com-cert.pem

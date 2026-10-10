@@ -1,0 +1,12 @@
+{
+  "sourceRevision": "e6ea9b9eb64b57ce3f922897beba26acbff1e8ea",
+  "sourceDirty": false,
+  "os": "26.5",
+  "machine": "arm64",
+  "cpuLogical": 8,
+  "memoryBytes": 34359738368,
+  "rustc": "rustc 1.97.0-nightly (e50aa6fba 2026-05-19)",
+  "cargo": "cargo 1.97.0-nightly (4d1f98451 2026-05-15)",
+  "dockerServer": "29.2.1",
+  "python": "Python 3.12.14"
+}

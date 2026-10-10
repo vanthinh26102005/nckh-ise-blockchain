@@ -1,0 +1,27 @@
+{
+  "kind": "e2_local_public_provenance",
+  "validationKind": "local-smoke",
+  "runId": 20261008,
+  "sourceRevision": "773d9a02fad2cb9966c7bcaf8239a4af19283996",
+  "sourceDirtyAtRun": false,
+  "binarySha256": "dcb5b281d5117fc35aec30389bba992c95be250016277119a1e28f7cbe552a9b",
+  "rawJsonlSha256": "4476857a1bb4988dea0f5b88a0cddcd9ca7ccaad22a0b493e34005d2a4270015",
+  "trustedPolicyManifestSha256": "9fac8d7238fd6db6a5ca313db6c5da417fa7fdb82a9c9cc5421fba82fdc37ab8",
+  "successfulRunLogSha256": "13164e3e9b7d2acaaa3d866db32e7de381ec1882c0aea98b0481c239a5321f56",
+  "failedFabricAttemptRawSha256": "d493ec974e377d496b06d790416ebc21e6cdcb8a8bb232d92dd0d868600fbc21",
+  "failedSwapAttemptRawSha256": "2bda3ce7861f5c806b5c74d4e4b9f88f4f573284ec8527015ba5dd5320d07a86",
+  "warmup": {
+    "eventId": "1",
+    "firstAttemptStatus": 409,
+    "successfulAttemptStatus": 201,
+    "readbackVerified": true,
+    "excludedFromMeasuredWorkload": true
+  },
+  "artifactsSha256": {
+    "analysis.json": "fcd0a3389e537870d05b8c01fa178e80bb16cd36f36618d6ea00951a1aad8890",
+    "preflight.json": "db06da75acf6d6bf93c146eff62e420135ad420d8ac04eba0212b570fff36f8b",
+    "ledger-check.json": "f16a69ec82006fa9e0b3a9c634d6a1b7f4674038e5eb5032c2c0359d980da9bc",
+    "chain-check.json": "feaaa65677e0e7dccb9f35c02799dd390c4704354953aa7203f68e460a6086a5",
+    "receipt.json": "5eeaa632e2fbf3cf186dd456044dce8d1527eb94e9bd4f82834fa7b96a1ea929"
+  }
+}

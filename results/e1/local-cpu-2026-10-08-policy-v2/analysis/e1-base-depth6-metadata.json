@@ -1,0 +1,108 @@
+{
+  "timestamp_utc": "2026-10-08T04:44:40.884564+00:00",
+  "command": "local CPU E1 C1-C5 n=8,16,32,64 seeds=30 depth=6 coffee-default source=e6ea9b9",
+  "raw_csv": "/Users/huxtris/Documents/NCKH-local-validation/e1-e4.LNYgZP/e1-base-depth6.csv",
+  "rows": 600,
+  "raw_sha256": "ce58aec490125caba9dfe854035ca80c3c1dfaec19583bb0402ab40c499f465f",
+  "status_counts": {
+    "ok": 600
+  },
+  "failed_rows": [],
+  "provenance": {
+    "circuit_version": [
+      "v4-plonky3-wgs84-polygon-poseidon2-commitments",
+      "v5-plonky3-poseidon2-merkle-selectable-depth",
+      "v4-plonky3-threshold-time",
+      "v4-plonky3-poseidon2-actor-authorization",
+      "v5-plonky3-poseidon2-sparse-nullifier-depth32"
+    ],
+    "semantic_scope": [
+      "Path B circuit-cost research; C2 membership, C4 actor preimage, C5 32-bit Poseidon2 index; not equivalent to Path A SHA-256/256-bit nullifiers"
+    ],
+    "hash": [
+      "Poseidon2/Goldilocks (one-field statement digests)"
+    ],
+    "fri_log_blowup": [
+      "3"
+    ],
+    "fri_num_queries": [
+      "33"
+    ],
+    "fri_query_pow_bits": [
+      "16"
+    ],
+    "security_model": [
+      "approximately 115 conjectured bits (3*33+16) checklist model; not a security certification"
+    ]
+  },
+  "credential_depths": [
+    6
+  ],
+  "security_checklist_model": "3*33+16 = approximately 115 conjectured bits; not a security certification; field/hash/protocol bounds apply",
+  "semantic_scope": "Path B circuit-cost research; not equivalent to Path A SHA-256/256-bit nullifiers",
+  "circuits": [
+    "c1_polygon_outside",
+    "c2_poseidon2_merkle",
+    "c3_threshold_time",
+    "c4_poseidon2_actor_authorization",
+    "c5_poseidon2_sparse_nullifier_depth32"
+  ],
+  "events_per_lot": [
+    8,
+    16,
+    32,
+    64
+  ],
+  "seeds_per_cell": {
+    "c1_polygon_outside:8:6": 30,
+    "c1_polygon_outside:16:6": 30,
+    "c1_polygon_outside:32:6": 30,
+    "c1_polygon_outside:64:6": 30,
+    "c2_poseidon2_merkle:8:6": 30,
+    "c2_poseidon2_merkle:16:6": 30,
+    "c2_poseidon2_merkle:32:6": 30,
+    "c2_poseidon2_merkle:64:6": 30,
+    "c3_threshold_time:8:6": 30,
+    "c3_threshold_time:16:6": 30,
+    "c3_threshold_time:32:6": 30,
+    "c3_threshold_time:64:6": 30,
+    "c4_poseidon2_actor_authorization:8:6": 30,
+    "c4_poseidon2_actor_authorization:16:6": 30,
+    "c4_poseidon2_actor_authorization:32:6": 30,
+    "c4_poseidon2_actor_authorization:64:6": 30,
+    "c5_poseidon2_sparse_nullifier_depth32:8:6": 30,
+    "c5_poseidon2_sparse_nullifier_depth32:16:6": 30,
+    "c5_poseidon2_sparse_nullifier_depth32:32:6": 30,
+    "c5_poseidon2_sparse_nullifier_depth32:64:6": 30
+  },
+  "rustc": "rustc 1.97.0-nightly (e50aa6fba 2026-05-19)",
+  "cargo": "cargo 1.97.0-nightly (4d1f98451 2026-05-15)",
+  "backend": "Plonky3 core",
+  "hash": "Poseidon2",
+  "plonky3_core_crates": {
+    "source": "https://github.com/Plonky3/Plonky3",
+    "version": "0.6 (exact resolved packages recorded in Cargo.lock)",
+    "crates": [
+      "p3-field",
+      "p3-goldilocks",
+      "p3-poseidon2",
+      "p3-uni-stark",
+      "p3-fri",
+      "p3-merkle-tree"
+    ]
+  },
+  "plonky3_recursion_crates": {
+    "source": "https://github.com/Plonky3/Plonky3-recursion",
+    "rev": "b36339709a7a67ee9760fb578b3d4339fd983709",
+    "status": "research prototype dependency; active development and unaudited"
+  },
+  "python": "3.12.14",
+  "os": "macOS-26.5-arm64-arm-64bit",
+  "machine": "arm64",
+  "processor": "arm",
+  "cpu_logical": 8,
+  "ram_backend": "getrusage_ru_maxrss",
+  "proof_size_policy": "measured Plonky3 STARK proof bytes; 196 bytes is paper target, not claimed",
+  "c4_status": "Poseidon2 actor authorization proof; Ed25519/EdDSA production verification remains a separate blocker",
+  "recursion_status": "Plonky3-recursion revision b363397 has a real Rust wrapper prove/verify smoke test for C1-C5; Solidity/EVM verification is not implemented"
+}

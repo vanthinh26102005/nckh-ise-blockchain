@@ -1,0 +1,36 @@
+{
+  "anchor": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
+  "anchorEvent": {
+    "address": "0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9",
+    "args": {
+      "epochId": "20261008001000001",
+      "eventBatchDigest": "0xaf9a428f7187ad721b780f97c308ab6b820ace88037461aa2da1a89a9c037cff",
+      "newNullifierRoot": "0x6d3301b2bdb704c7700da162a8746a612746ef8ce7515b20983dbff842722ca2",
+      "nullifier": "0xb3f47f5807fe2d26c8bb640934115ae2f30a79e8cf526442c4057e422f364e05",
+      "oldNullifierRoot": "0x1a8917f23b86dd549f86854cfb01e45ea09dab7a725e9ec64df653c16a3bf2be"
+    },
+    "blockHash": "0x209c92316ea7aa2964b45a9e7e45e50f5f3390c975a876600df5f5a5458dcedd",
+    "name": "EpochAnchored",
+    "transactionHash": "0x0e724a313d12836d51bebcdaeeed059c656db214f071983087614a5142a90a14"
+  },
+  "calldataBytes": 932,
+  "certificateRoot": "0x0d8517a2ab26e34816d1f948a6c8feeb9c87ae142309d238c76919313ddf16b0",
+  "epochId": "20261008001000001",
+  "eventBatchDigest": "0xaf9a428f7187ad721b780f97c308ab6b820ace88037461aa2da1a89a9c037cff",
+  "eventCount": 9,
+  "gasUsed": "322383",
+  "newNullifierRoot": "0x6d3301b2bdb704c7700da162a8746a612746ef8ce7515b20983dbff842722ca2",
+  "nullifier": "0xb3f47f5807fe2d26c8bb640934115ae2f30a79e8cf526442c4057e422f364e05",
+  "oldNullifierRoot": "0x1a8917f23b86dd549f86854cfb01e45ea09dab7a725e9ec64df653c16a3bf2be",
+  "policyValid": true,
+  "polygonCommitment": "0xec01c44250404ddafe1f40f592ab82d5b2e28f0448976856918a640f2eacf235",
+  "programVKey": "0x006a84ed741539449342d9da781756448d9675642cb7e9fcd4534ed421127eb9",
+  "protocolVersion": 2,
+  "publicValuesBytes": 352,
+  "registry": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+  "role": 4,
+  "status": 1,
+  "threshold": 900,
+  "transactionHash": "0x0e724a313d12836d51bebcdaeeed059c656db214f071983087614a5142a90a14",
+  "verificationKind": "sp1-groth16"
+}

@@ -1,0 +1,8 @@
+{
+  "validationKind": "local-resource-budget",
+  "status": "passed",
+  "reason": null,
+  "exitCode": 0,
+  "peakRssBytes": 68026368,
+  "elapsedSeconds": 19.130548
+}

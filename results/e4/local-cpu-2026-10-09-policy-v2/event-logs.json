@@ -1,0 +1,42 @@
+{
+  "kind": "independent_e4_event_log_decode",
+  "verified": true,
+  "events": [
+    {
+      "transactionHash": "0x810f6a2b8c8a361940ee2cd2c4079b46a540139cf0443b590de4059213a9dc02",
+      "epochId": "3000",
+      "epochCommitment": "0x04660b110ab054989868ca0bcb71e7ee017696f1cae831711f69e51591a291a9",
+      "oldNullifierRoot": "0x1a8917f23b86dd549f86854cfb01e45ea09dab7a725e9ec64df653c16a3bf2be",
+      "newNullifierRoot": "0x689d6c1158691e530d1baa5c08bf2f8be366d592b0f38905fca31883d742dca1",
+      "lotCount": "1",
+      "eventCount": "13"
+    },
+    {
+      "transactionHash": "0x293cda94a428db2fc5c2167c044b2c6c17de6437eab1c763f401eca73cf00c83",
+      "epochId": "3001",
+      "epochCommitment": "0xe8877529bbcb65c38fd73db32200959a8715ece6401d4f10c199f9fc43d2552b",
+      "oldNullifierRoot": "0x689d6c1158691e530d1baa5c08bf2f8be366d592b0f38905fca31883d742dca1",
+      "newNullifierRoot": "0x590b6e8512b7588280730edf290e6313fa9852f41a0fc15a44db3c67394f032b",
+      "lotCount": "1",
+      "eventCount": "14"
+    },
+    {
+      "transactionHash": "0x862882c2893e719012715981a1ed84fb4b8c9e9b2481e8fcec153b63cffab525",
+      "epochId": "3002",
+      "epochCommitment": "0x82ecde51acfbe97d6c6adab3c5517c2083c6b5c52ea2a8554fe78484fa620d21",
+      "oldNullifierRoot": "0x590b6e8512b7588280730edf290e6313fa9852f41a0fc15a44db3c67394f032b",
+      "newNullifierRoot": "0x670909da76d5fd8022f9f74a0b484398ecafacab15d7a4c675c6cf3c412da76a",
+      "lotCount": "1",
+      "eventCount": "12"
+    },
+    {
+      "transactionHash": "0x59a4259592f8a5be82c1b133234e35ebcdbcdbfe00bb5d3c0bbdbda07c1c59e2",
+      "epochId": "3003",
+      "epochCommitment": "0x89cc8553cba6c3eb955dba7411b9c65685dd23458003e1798f2cc7ed59c9070a",
+      "oldNullifierRoot": "0x670909da76d5fd8022f9f74a0b484398ecafacab15d7a4c675c6cf3c412da76a",
+      "newNullifierRoot": "0x7256990e79447bb7ef87969c4f5b184adef709e267765fb526a70e1834fdbd83",
+      "lotCount": "1",
+      "eventCount": "9"
+    }
+  ]
+}
