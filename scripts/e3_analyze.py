@@ -99,6 +99,8 @@ def analyze(records, allow_partial=False):
     isolation_namespaces=set()
     isolation_paths=set()
     for record in records:
+        if record.get("validationKind") == "local-smoke" or record.get("measurement", {}).get("validationKind") == "local-smoke":
+            raise ValueError("local E3 smoke is not formal evidence; use e3_local_analyze.py")
         mode, seed = record["mode"], record["seed"]
         if record.get("protocolVersion") != 2:
             if not allow_partial:

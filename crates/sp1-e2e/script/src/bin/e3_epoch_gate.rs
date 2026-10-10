@@ -17,6 +17,7 @@ use sp1_sdk::{
 use std::{
     fs,
     path::PathBuf,
+    process::Command,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -48,6 +49,7 @@ enum ProverKind {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    require_clean_source_and_private_output(&cli.out)?;
     if cli.out.exists() { bail!("output already exists"); }
     if cli.prepare_only {
         return match cli.prover { ProverKind::Cpu=>prepare(&cli,&ProverClient::builder().cpu().build()),ProverKind::Cuda=>prepare_cuda(&cli) };
@@ -95,12 +97,14 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
     let registry = benchmark_registry(epoch_id,&all_events).map_err(|e|anyhow!(e))?;
     sp1_e2e::require_registry_configuration(&registry,&leaf_key.verifying_key().bytes32(),&epoch_key.verifying_key().bytes32(),leaf_key.verifying_key().hash_bytes(),epoch_key.verifying_key().hash_bytes()).map_err(|e|anyhow!(e))?;
     let registry_ms=registry_started.elapsed().as_secs_f64()*1000.0;
-    for (lot_id,events) in planned {
-        for witness in &events {
+    let mut readback_events = 0_usize;
+    for (lot_id,mut events) in planned {
+        for witness in &mut events {
             if !cli.reuse_fabric_evidence {
                 gateway.post_event(&witness.event_bytes)?;
             }
-            gateway.assert_event_was_committed(&witness.event_bytes)?;
+            witness.event_bytes = gateway.read_committed_event(&witness.event_bytes)?;
+            readback_events += 1;
         }
         let witness_started=Instant::now();
         let secret = benchmark_nullifier_key(epoch_id, lot_id);
@@ -171,6 +175,8 @@ fn run<P: Prover>(cli: Cli, client: P) -> Result<()> {
         "oldNullifierRoot": format!("0x{}", hex::encode(initial_root)),
         "newNullifierRoot": format!("0x{}", hex::encode(nullifiers.root())),
         "fabricEventsAcknowledged": 2 * cli.events_per_leaf,
+        "fabricEventsReadback": readback_events,
+        "fabricEvidenceReused": cli.reuse_fabric_evidence,
         "tamperedChildRejected": true,
         "leafCompressedProofMs": leaf_ms,
         "setupMs":setup_ms,"registryAndWorkloadMs":registry_ms,"witnessMs":witness_ms,
@@ -230,6 +236,21 @@ fn prepare<P:Prover>(cli:&Cli,client:&P) -> Result<()> {
         "polygonCommitment":format!("0x{}",hex::encode(eudr_policy::polygon_commitment(&registry.polygon,registry.polygon_nonce))),
         "workloadDigest":format!("0x{}",hex::encode(Sha256::digest(all.iter().flat_map(|w|w.event_bytes).collect::<Vec<_>>()))) });
     fs::write(&cli.out,serde_json::to_vec_pretty(&output)?)?; Ok(())
+}
+
+fn require_clean_source_and_private_output(out: &PathBuf) -> Result<()> {
+    let checkout = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors().nth(3).context("locate E3 Git checkout")?.canonicalize()?;
+    if !out.is_absolute() || out.components().any(|part| matches!(part, std::path::Component::ParentDir))
+        || out.starts_with(&checkout) {
+        bail!("E3 manifest/proof output must be a fresh absolute path outside the Git checkout");
+    }
+    let status = Command::new("git").args(["status", "--porcelain"])
+        .current_dir(&checkout).output().context("inspect source checkout")?;
+    if !status.status.success() || !status.stdout.is_empty() {
+        bail!("E3 gate requires a clean source checkout before manifest/proof generation");
+    }
+    Ok(())
 }
 
 #[cfg(feature="cuda")]

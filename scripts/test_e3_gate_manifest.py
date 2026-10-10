@@ -19,7 +19,8 @@ def examples():
     fixture = {"protocolVersion":2,"verificationKind":"sp1-groth16","sourceRevision":"1"*40,"vkey":root("a"),"leafVKeyDigest":root("b"),
         "aggregateVKeyDigest":root("c"),"publicValues":public_values,"proof":"0x4388a21c"+"0"*704,"epochId":"1",
         "oldNullifierRoot":root("1"),"newNullifierRoot":root("2"),"certificateRoot":root("4"),"polygonCommitment":root("5"),
-        "fabricEventsAcknowledged":16,"tamperedChildRejected":True,"leafCompressedProofMs":1,"aggregateGroth16ProofMs":1}
+        "fabricEventsAcknowledged":16,"fabricEventsReadback":16,"fabricEvidenceReused":False,
+        "tamperedChildRejected":True,"leafCompressedProofMs":1,"aggregateGroth16ProofMs":1}
     receipt = {"protocolVersion":2,"verificationKind":"sp1-groth16","sourceRevision":"1"*40,"publicValuesBytes":352,"policyValid":True,
         "tamperedAggregateProofRejected":True,"tamperedAggregateValuesRejected":True,"programVKey":root("a"),"status":1,"epochId":"1","oldNullifierRoot":root("1"),"newNullifierRoot":root("2"),"certificateRoot":root("4"),
         "polygonCommitment":root("5"),"leafVKeyDigest":root("b"),"aggregateVKeyDigest":root("c"),"lotCount":"2","eventCount":"16",
@@ -64,6 +65,7 @@ class GateChecks(unittest.TestCase):
         self.assertEqual(gate["protocolVersion"],2)
         self.assertEqual(gate["verificationKind"],"sp1-groth16")
         for section,field,value in [("fixture","sourceRevision","2"*40),("receipt","sourceRevision","2"*40),("receipt","tamperedAggregateProofRejected",False),("receipt","tamperedAggregateValuesRejected",False),("fixture","protocolVersion",1),("fixture","verificationKind","contract-stub-test"),
+            ("fixture","fabricEventsReadback",15),("fixture","fabricEvidenceReused",True),
             ("fixture","publicValues",fixture["publicValues"][:-64]),("fixture","proof","0x"),("receipt","status",0),("receipt","programVKey",root("f")),
             ("receipt","epochId","2"),("receipt","certificateRoot",root("f")),("receipt","polygonCommitment",root("f")),
             ("receipt","leafVKeyDigest",root("f")),("receipt","aggregateVKeyDigest",root("f")),("receipt","oldNullifierRoot",root("f"))]:
