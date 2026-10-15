@@ -1,0 +1,119 @@
+% DRAW-SPEC
+% message: a compliance view opens a chosen subset of salted event leaves and
+%          the policy data, and the verifier recomputes the same commitment the
+%          contract already anchored -- without ever seeing the withheld secrets.
+% nodes: salted event Merkle tree (L0) | opening bundle V and the withheld set |
+%        independent verifier, checked against the anchored log.
+% shape/pattern encoding (colour is never the only cue):
+%   filled amber square  = leaf opened in this view
+%   square with a slash  = leaf withheld (bytes and salt never exported)
+%   heavy blue outline   = hash supplied so the root can be recomputed
+%   solid card           = data that leaves the holder
+%   rose dashed card     = data that never leaves the holder
+% the opened leaves are 1 and 4, so the hashes that must travel with them are
+% leaf 0, leaf 5 and the two inner nodes over leaves 2--3 and 6--7; the nodes
+% over 0--3 and 4--7 are recomputed by the verifier, never supplied.
+% source: Sec. 3.4 (leaf binding, batch digest D) and Sec. 4.5 (view prototype).
+% width: designed for \includegraphics[width=\textwidth] in LNCS (122.5 mm).
+% column budget: 2 | tree 2..36 | gap | view 38.5..78 | gap | verifier 80.5..120.5
+
+\documentclass[tikz,border=0pt]{standalone}
+\usepackage{draw-paper}
+\usetikzlibrary{backgrounds,positioning,fit,calc}
+
+\tikzset{
+  lf/.style={rounded corners=0.3mm,draw=drawInk!55,fill=white,
+             line width=0.4pt,minimum size=2.9mm,inner sep=0pt},
+  lfopen/.style={lf,fill=drawAmber!55,draw=drawInk!75,line width=0.6pt},
+  lfsib/.style={lf,draw=drawBlue,line width=0.75pt},
+  nd/.style={circle,draw=drawInk!55,fill=white,line width=0.4pt,
+             minimum size=2.5mm,inner sep=0pt},
+  ndsib/.style={nd,draw=drawBlue,line width=0.75pt},
+  tw/.style={draw=drawInk!45,line width=0.4pt},
+  card/.style={draw card,text width=#1},
+  card/.default=30mm,
+  keep/.style={draw card,draw=drawRose,densely dashed,line width=0.6pt,
+               text width=#1},
+  keep/.default=30mm,
+  tag/.style={draw annotation,align=center,text=drawInk,
+              font=\sffamily\fontsize{7.0}{7.6}\selectfont},
+  ttl/.style={align=center,text=drawInk,
+              font=\sffamily\bfseries\fontsize{7.4}{8.2}\selectfont},
+}
+
+\begin{document}
+\begin{tikzpicture}[draw canvas,node distance=3mm]
+
+  % ================= 1. salted event Merkle tree ===================
+  \begin{scope}[shift={(5.7,8)}]
+    \foreach \i in {0,...,7}{ \node[lf] (l\i) at (\i*3.8,0) {}; }
+    \node[lfopen] (l1) at (1*3.8,0) {};
+    \node[lfopen] (l4) at (4*3.8,0) {};
+    \node[lfsib]  (l0) at (0*3.8,0) {};
+    \node[lfsib]  (l5) at (5*3.8,0) {};
+    \foreach \i in {2,3,6,7}{ \draw[tw] (l\i.south west) -- (l\i.north east); }
+
+    \foreach \j in {0,...,3}{ \node[nd] (n\j) at (\j*7.6+1.9,6) {}; }
+    \node[ndsib] (n1) at (1*7.6+1.9,6) {};
+    \node[ndsib] (n3) at (3*7.6+1.9,6) {};
+    \node[nd] (m0) at (5.7,11.6) {};
+    \node[nd] (m1) at (20.9,11.6) {};
+    \node[nd,minimum size=3.1mm,fill=drawSky!30] (rt) at (13.3,17.2) {};
+
+    \foreach \i/\j in {0/0,1/0,2/1,3/1,4/2,5/2,6/3,7/3}{
+      \draw[tw] (l\i.north) -- (n\j.south); }
+    \foreach \j/\k in {0/0,1/0,2/1,3/1}{ \draw[tw] (n\j.north) -- (m\k.south); }
+    \draw[tw] (m0.north) -- (rt.south);  \draw[tw] (m1.north) -- (rt.south);
+    \node[tag,anchor=west,inner xsep=0.6mm] at ($(rt.east)+(1.2mm,0)$) {$R_E$};
+  \end{scope}
+
+  \node[tag,text width=33mm,anchor=north] at (19,5.6)
+    {leaf $i$ binds $\big(i,\,r_i,\,\mathsf{bytes}(e_i)\big)$\\
+     $r_i=\mathsf{HMAC}_{r_B}(\mathrm{tag}_r\Vert i)$\\
+     $D=\mathsf{H}(\mathrm{tag}_D,n,R_E)$};
+
+  % ================= 2. what leaves, what stays ====================
+  \node[card,anchor=north] (open) at (58.25,31)
+    {\textbf{opening bundle} $\mathcal{V}$\\
+     selected $e_i$ + salts $r_i$\\
+     sibling hashes\\
+     polygon $(G,r_G)$\\
+     credential leaf + path};
+  \node[keep,below=of open] (hide)
+    {\textbf{never exported}\\
+     $k_N$, secret $s$, nonce $r_B$\\
+     bytes and salts of all\\
+     unselected events};
+
+  % ================= 3. independent verifier =======================
+  \node[card=31mm,anchor=north] (ver) at (100.5,31)
+    {\textbf{independent verifier}\\
+     recomputes $R_E$, $D$, $c_G$, $R_C$\\
+     checks receipt, anchor log,\\
+     program keys, code hash};
+  \node[card=31mm,below=of ver] (out)
+    {accepts iff $D$ matches the\\
+     $\Gamma$ anchored on L1\\
+     \textit{credential-only or}\\
+     \textit{polygon-only: rejected}};
+
+  % ================= zones, titles, flow ===========================
+  \begin{scope}[on background layer]
+    \node[fit=(l0)(l7)(rt),inner xsep=3.2mm,inner ysep=2.8mm,
+          rounded corners=2mm,fill=drawLight,draw=none] (zTree) {};
+    \node[fit=(open)(hide),inner sep=2.4mm,
+          rounded corners=2mm,fill=drawSky!10,draw=none] (zBun) {};
+    \node[fit=(ver)(out),inner sep=2.4mm,
+          rounded corners=2mm,fill=drawTeal!8,draw=none] (zVer) {};
+  \end{scope}
+
+  % one common baseline for the three titles, so the columns read as a grid
+  \coordinate (tl) at ($(zBun.north)+(0,1.1mm)$);
+  \node[ttl,anchor=south] at (zTree.center |- tl) {Salted event tree, held on L0};
+  \node[ttl,anchor=south] at (zBun.center  |- tl) {Compliance view};
+  \node[ttl,anchor=south] at (zVer.center  |- tl) {Regulator, importer or certifier};
+
+  \draw[draw primary] (zTree.east |- open) -- (zBun.west |- open);
+  \draw[draw primary] (zBun.east  |- ver)  -- (zVer.west |- ver);
+\end{tikzpicture}
+\end{document}

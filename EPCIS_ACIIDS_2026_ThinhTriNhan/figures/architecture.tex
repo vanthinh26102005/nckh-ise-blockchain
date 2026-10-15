@@ -1,68 +1,151 @@
-% DRAW-SPEC
-% message: Raw EPCIS events stay on Fabric; one recursive proof per epoch is
-%          settled on a public EVM contract; auditors check L1 plus openings.
-% reading-order: column 1 top-down (L0), then prover column, then L1 column.
-% nodes: prod, canon, fabric, leaf, agg, pathb, registry, anchor, auditor.
-% edges:
-%   prod -> canon      : signed EPCIS 2.0 events, normalised
-%   canon -> fabric    : committed record + SHA-256
-%   fabric -> leaf     : committed events of one lot
-%   fabric -> pathb    : same witnesses, cost analysis [dashed]
-%   leaf -> agg        : leaf proofs (<= 8 per node)
-%   agg -> anchor      : Groth16 proof pi with epoch statement (named in agg card)
-%   registry -> anchor : registered roots R_C, c_G (B1) [dashed]
-%   anchor -> auditor  : anchored Gamma, rho
-%   fabric -> auditor  : off-chain openings V [dotted]
-% boundaries: consortium (L0) | prover (off-chain) | public chain (L1).
-% target: 122 mm x 72 mm (LNCS \textwidth); final text >= 7 pt.
+% DRAW-SPEC (revision 2)
+% message: EPCIS events stay on Fabric (L0); per-lot SP1 proofs are folded by a
+%          fan-in-8 recursive tree whose ROOT ALONE is wrapped in Groth16 and
+%          settled on L1, where it advances an append-only nullifier-set root.
+% why redrawn: rev 1 hid the two claims the paper rests on -- the recursion tree
+%          (constant on-chain cost) and the nullifier root chain -- and omitted
+%          the on-chain PolicyRegistry that enforces condition B1.
+% shape encoding (colour is never the only cue):
+%   stadium       = actor / organisation   (people, not code)
+%   cylinder      = append-only data store (Fabric ledger)
+%   plain card    = off-chain computation  (prover programs)
+%   double border = EVM smart contract     (on-chain code)
+%   small square  = one proof object; diamond = the tree root
+% reading order: L0 column top-down, then prover column, then L1 column.
+% layout: columns are chained with the positioning library and the zone frames
+%         are fitted around them, so no height is hard-coded.
+% width: designed for \includegraphics[width=\textwidth] in LNCS (122.5 mm), so
+%        the figure is placed at scale 1.0 and all text stays at 7.0 pt.
 
 \documentclass[tikz,border=0pt]{standalone}
 \usepackage{draw-paper}
+\usetikzlibrary{shapes.geometric,backgrounds,positioning,fit,calc}
 
-\def\FigureWidthMM{122}
-\def\FigureHeightMM{72}
+\tikzset{
+  actor/.style={draw card,rounded corners=3.2mm,fill=drawLight,
+                draw=drawInk!45,text width=#1},
+  actor/.default=25mm,
+  store/.style={cylinder,shape border rotate=90,aspect=0.11,
+                draw=drawInk!45,fill=white,line width=0.55pt,align=center,
+                inner xsep=2.2mm,inner ysep=1.7mm,text width=#1},
+  store/.default=25mm,
+  proc/.style={draw card,text width=#1},
+  proc/.default=37mm,
+  evm/.style={draw card,rounded corners=0.9mm,draw=drawInk!70,
+              double,double distance=0.5pt,text width=#1},
+  evm/.default=29mm,
+  pf/.style={rounded corners=0.35mm,draw=drawInk!55,fill=drawSky!35,
+             line width=0.4pt,minimum size=2.7mm,inner sep=0pt},
+  root/.style={diamond,draw=drawInk!70,fill=drawAmber!45,line width=0.45pt,
+               minimum size=3.4mm,inner sep=0pt,aspect=1.1},
+  fan/.style={draw=drawInk!50,line width=0.4pt},
+  tag/.style={draw annotation,align=center,text=drawInk,
+              font=\sffamily\fontsize{7.0}{7.6}\selectfont},
+  badge/.style={circle,draw=drawInk!60,fill=white,line width=0.45pt,
+                inner sep=0.3mm,text=drawInk,
+                font=\sffamily\bfseries\fontsize{7.0}{7.4}\selectfont},
+}
 
 \begin{document}
-\begin{tikzpicture}[draw canvas,
-  card/.style={draw card,text width=#1},
-  card/.default=27mm]
-  \path[use as bounding box] (0,0) rectangle (\FigureWidthMM,\FigureHeightMM);
+\begin{tikzpicture}[draw canvas,node distance=3.5mm]
 
-  % ---- zones -----------------------------------------------------
+  % ================= L0 column =====================================
+  \node[actor,anchor=north] (prod) at (19,70)
+    {Producers, processors\\ and exporters sign\\ EPCIS 2.0 (Ed25519)};
+  \node[proc=25mm,below=of prod] (canon)
+    {Canonical record $e$\\ 86 B, one encoding};
+  \node[store,below=of canon] (fabric)
+    {Fabric channel\\ 2 org, 2 peers,\\ 3 Raft orderers\\ stores $e$ + SHA-256};
+
+  % ================= prover column =================================
+  \node[proc,anchor=north] (leaf) at (61,70)
+    {\textbf{Path A}: SP1 leaf proof per lot\\
+     C1 geofence, C2 credential,\\
+     C3 threshold/time, C4 Ed25519,\\
+     C5 nullifier, commits $x$ (352 B)};
+
+  % ---- recursive aggregation ---------------------------------------
+  \node[anchor=north,inner sep=0pt,minimum height=2.4mm,
+        minimum width=20mm,below=4mm of leaf] (row) {};
+  \foreach \i in {0,...,7}{%
+    \node[pf,minimum size=2.4mm] (p\i) at ($(row.west)+(1.3mm+\i*2.5mm,0)$) {};}
+  \node[tag,anchor=east,inner xsep=0.6mm] at ($(row.west)+(-1.6mm,0)$)
+    {$m$ leaf\\ proofs};
+  \coordinate (junction) at ($(row.south)+(0,-3.6mm)$);
+
+  \node[proc=37mm,below=7mm of row] (agg)
+    {aggregate guest verifies $\le 8$\\
+     children in-zkVM, binds their\\
+     VK digests and chains $\rho$;\\
+     $H=\lceil\log_8 m\rceil$ levels deep};
+
+  \node[root,below=2.5mm of agg] (rt) {};
+  \node[tag,anchor=west,inner xsep=0.6mm] at ($(rt.east)+(1.0mm,0)$)
+    {tree root};
+
+  \node[proc=37mm,below=2.5mm of rt] (wrap)
+    {\textbf{root alone} is wrapped in Groth16:\\
+     $\pi$ 356 B, public values 352 B};
+
+  \node[proc=37mm,draw=drawSlate,densely dashed,below=of wrap] (pathb)
+    {\textbf{Path B}: Plonky3 AIRs C1--C5\\ cost analysis; no EVM verifier};
+
+  % ================= L1 column =====================================
+  \node[evm,anchor=north] (reg) at (103,70)
+    {\texttt{PolicyRegistry}\\ owner-approved $(R_C,c_G)$};
+  \node[evm,below=5mm of reg] (anchor)
+    {\texttt{EpochAggregateAnchor}\\ verifies $\pi$ and VK digests,\\
+     $\rho_{\mathrm{old}}$ = stored root,\\ epoch $\epsilon$ unseen};
+  \node[evm,below=5mm of anchor] (chain)
+    {$\rho_0\!\to\!\rho_1\!\to\!\cdots\!\to\!\rho_m$\\ append-only root chain};
+  \node[actor=29mm,below=5mm of chain] (aud)
+    {Auditor / importer\\ reads the anchored log};
+
+  % ================= zones (fitted, drawn behind) ==================
   \begin{scope}[on background layer]
-    \path[rounded corners=2mm,fill=drawLight] (2.5,2.5) rectangle (36.5,69.5);
-    \path[rounded corners=2mm,fill=drawSky!10] (40,2.5) rectangle (82.5,69.5);
-    \path[rounded corners=2mm,fill=drawTeal!8] (86,2.5) rectangle (119.5,69.5);
+    \node[fit=(prod)(canon)(fabric),inner sep=2.2mm,
+          rounded corners=2mm,fill=drawLight,draw=none] (zL0) {};
+    \node[fit=(leaf)(row)(agg)(wrap)(pathb),inner sep=2.2mm,
+          rounded corners=2mm,fill=drawSky!10,draw=none] (zPr) {};
+    \node[fit=(reg)(anchor)(chain)(aud),inner sep=2.2mm,
+          rounded corners=2mm,fill=drawTeal!8,draw=none] (zL1) {};
+    \node[fit=(row)(agg)(rt),inner sep=2.0mm,rounded corners=1.2mm,
+          draw=drawInk!30,densely dashed,line width=0.5pt] (blk) {};
   \end{scope}
-  \node[draw header] at (19.5,65) {Consortium (L0)};
-  \node[draw header] at (61.25,65) {Prover (off-chain)};
-  \node[draw header] at (102.75,65) {Public chain (L1)};
 
-  % ---- L0 column -------------------------------------------------
-  \node[card=29mm] (prod) at (19.5,52) {Producers, processors,\\ exporters sign EPCIS 2.0\\ events (Ed25519)};
-  \node[card=29mm] (canon) at (19.5,35.5) {Canonical record $e$\\ (86 B, one encoding)};
-  \node[card=29mm] (fabric) at (19.5,18) {Hyperledger Fabric\\ stores $e$ and SHA-256,\\ rejects duplicates};
+  \node[draw header,anchor=south] at (zL0.north) {Consortium (L0)};
+  \node[draw header,anchor=south] at (zPr.north) {Prover (off-chain)};
+  \node[draw header,anchor=south] at (zL1.north) {Public chain (L1)};
 
-  % ---- prover column ----------------------------------------------
-  \node[card=37mm] (leaf) at (61.25,50.5) {Path A: leaf proof per lot (SP1)\\ C1 geofence, C2 credential,\\ C3 threshold/time,\\ C4 Ed25519, C5 nullifier};
-  \node[card=37mm] (agg) at (61.25,33) {Recursive aggregation $\mathcal{R}_{\mathsf{epoch}}$\\ (fan-in $\le 8$), root wrapped\\ in Groth16 proof $\pi$};
-  \node[card=37mm,draw=drawSlate,densely dashed] (pathb) at (61.25,18) {Path B: Plonky3 AIRs C1--C5\\ + recursive wrapper\\ (cost analysis only)};
+  \node[tag,anchor=south west] at ($(blk.north west)+(1.6mm,-0.9mm)$)
+    {Recursive aggregation $\mathcal{R}_{\mathsf{epoch}}$};
 
-  % ---- L1 column --------------------------------------------------
-  \node[card=27mm,draw=drawSlate,densely dashed] (registry) at (102.75,53) {Registry authority\\ publishes $R_C$, $c_G$};
-  \node[card=27mm] (anchor) at (102.75,33) {Anchor contract:\\ verify $\pi$, VK digests,\\ root chain, no replay;\\ store $\rho$, emit $\Gamma$};
-  \node[card=27mm] (auditor) at (102.75,14) {Auditor / importer\\ checks L1 and\\ openings $\mathcal{V}$};
-
-  % ---- edges -------------------------------------------------------
-  \draw[draw primary] (prod.south) -- (canon.north);
+  % ================= edges =========================================
+  \draw[draw primary] (prod.south)  -- (canon.north);
   \draw[draw primary] (canon.south) -- (fabric.north);
-  \draw[draw primary] ([yshift=3.5mm]fabric.east) -- (37.1,21.5) |- (leaf.west);
-  \draw[draw support] ([yshift=-2.5mm]fabric.east) -- ([yshift=-2.5mm]pathb.west);
-  \draw[draw primary] (leaf.south) -- (agg.north);
-  \draw[draw primary] (agg.east) -- (anchor.west);
-  \draw[draw support] (registry.south) -- node[draw annotation,right=0.3mm,align=left] {roots\\(B1)} (anchor.north);
-  \draw[draw primary] (anchor.south) -- node[draw annotation,right=0.3mm] {$\Gamma,\rho$} (auditor.north);
+
+  \draw[draw primary] ([yshift=5mm]fabric.east) -| ($(zL0.east)!0.5!(zPr.west)$)
+        |- (leaf.west);
+  \draw[draw support] ([yshift=-5mm]fabric.east) -| ($(zL0.east)!0.3!(zPr.west)$)
+        |- (pathb.west);
+
+  \draw[draw primary] (leaf.south) -- (row.north);
+  \foreach \i in {0,...,7}{ \draw[fan] (p\i.south) -- (junction); }
+  \draw[draw primary] (junction) -- (agg.north);
+  \draw[draw primary] (agg.south) -- (rt.north);
+  \draw[draw primary] (rt.south)  -- (wrap.north);
+
+  \draw[draw primary] (wrap.east) -| ($(zPr.east)!0.5!(zL1.west)$) |- (anchor.west);
+  \draw[draw support] (reg.south)    -- node[badge] {B1} (anchor.north);
+  \draw[draw primary] (anchor.south) -- (chain.north);
+  \draw[draw primary] (chain.south)  -- node[tag,right=0.2mm] {$\Gamma,\rho$} (aud.north);
+
+  % off-chain disclosure channel, running outside all three layers
+  \coordinate (strip) at ($(zPr.south)+(0,-3.5mm)$);
   \draw[-{Latex[length=1.9mm,width=1.3mm]},draw=drawOrange,line width=0.76pt,dotted]
-    (fabric.south) -- (19.5,3.8) -- node[draw annotation,above=0.1mm,pos=0.5] {off-chain openings $\mathcal{V}$ (selective view)} (102.75,3.8) -- (auditor.south);
+    (fabric.south) |- (strip -| fabric)
+      -- node[tag,above=0.2mm,pos=0.5]
+         {selective openings $\mathcal{V}$ --- served off-chain by the data holder, read from L0}
+      (strip -| aud) -- (aud.south);
 \end{tikzpicture}
 \end{document}
