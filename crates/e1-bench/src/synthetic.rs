@@ -178,15 +178,7 @@ pub fn halfplanes_for_polygon(poly: &[PointE6]) -> Vec<HalfPlane> {
 }
 
 pub fn poseidon2_permute(input: [F; 8]) -> [F; 8] {
-    let external = p3_poseidon2::ExternalLayerConstants::new(
-        p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_INITIAL.to_vec(),
-        p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_FINAL.to_vec(),
-    );
-    let perm = p3_goldilocks::Poseidon2Goldilocks::<8>::new(
-        &external,
-        &p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_INTERNAL,
-    );
-    perm.permute(input)
+    p3_goldilocks::default_goldilocks_poseidon2_8().permute(input)
 }
 
 pub fn poseidon2_hash(inputs: &[F]) -> [F; 4] {
@@ -197,4 +189,27 @@ pub fn poseidon2_hash(inputs: &[F]) -> [F; 4] {
     state[7] = f(inputs.len() as u64);
     let out = poseidon2_permute(state);
     [out[0], out[1], out[2], out[3]]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn poseidon2_permute_matches_goldilocks_width8_known_vector() {
+        // Plonky3 0.6.3's default width-8 vector must hold across CPU architectures.
+        let input = [0, 1, 2, 3, 4, 5, 6, 7].map(f);
+        let expected = [
+            0x020cf04a1b214d14,
+            0x84e14aaaeacaed25,
+            0x1ae0f640e81c7457,
+            0xa4d204cbaeb0d8a5,
+            0x0cf637b627b3a7ff,
+            0x788d304d948b486b,
+            0x7327133ea1949af4,
+            0xf415abb924da395b,
+        ]
+        .map(f);
+        assert_eq!(poseidon2_permute(input), expected);
+    }
 }
